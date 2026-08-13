@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#ffffff">
+    <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
+    <title>おたすけメッセージ</title>
+    <link rel="stylesheet" href="/styles.css?v=5">
+  </head>
+  <body>
+    <main class="app-shell" id="app">
+      <header class="app-header">
+        <button class="icon-button" id="backButton" type="button" aria-label="前の画面に戻る" title="戻る" disabled>←</button>
+        <div class="brand" aria-label="おたすけメッセージ">
+          <span class="brand-mark" aria-hidden="true">●</span>
+          <span>おたすけメッセージ</span>
+        </div>
+        <button class="icon-button adult-button" id="adultButton" type="button" aria-label="大人向け情報を開く" title="大人向け">人</button>
+      </header>
+
+      <section class="screen is-active" data-screen="setup" aria-labelledby="setupTitle">
+        <div class="face-mark" aria-hidden="true"><span>⌣</span></div>
+        <h1 id="setupTitle">いっしょにおはなししよう</h1>
+        <p class="lead">そばのおとなが準備したら、声でお話しできます。</p>
+        <div class="adult-gate">
+          <div>
+            <p class="section-label">大人の確認</p>
+            <h2>同意済み素材でデモを開始</h2>
+            <p id="consentDisclosure">同意情報を確認しています</p>
+          </div>
+          <label class="check-row">
+            <input id="consentCheck" type="checkbox">
+            <span>本人同意と利用範囲を確認しました</span>
+          </label>
+          <label class="field-label" for="demoScenario">デモ入力</label>
+          <select id="demoScenario">
+            <option value="きょうブロックでおうちを作ったよ">通常成功：できたこと</option>
+            <option value="ママに会えなくてさみしいの">通常成功：さみしい</option>
+            <option value="きょうブロックでおうちを作ったよ" data-demo-fault="media-unavailable">生成失敗：中立案内へ切替</option>
+            <option value="知らない人がいて怖い、助けて">安全対応：大人へ引き継ぐ</option>
+          </select>
+        </div>
+        <button class="primary-button" id="startSetup" type="button" disabled>はじめる</button>
+      </section>
+
+      <section class="screen" data-screen="record" aria-labelledby="recordTitle">
+        <div class="face-mark small" aria-hidden="true"><span>⌣</span></div>
+        <h1 id="recordTitle">おはなししてね</h1>
+        <p class="lead" id="recordLead">マイクをおすと、きいているよ</p>
+        <div class="waveform" id="waveform" aria-hidden="true"></div>
+        <p class="timer" id="timer">00:00</p>
+        <button class="mic-button" id="recordButton" type="button" aria-label="録音を開始する">
+          <span class="mic-glyph" aria-hidden="true">●</span>
+        </button>
+        <p class="action-label" id="recordActionLabel">おしておはなし</p>
+        <button class="text-button" id="demoAudioButton" type="button">デモ音声で進める</button>
+        <p class="inline-error" id="recordError" role="alert"></p>
+      </section>
+
+      <section class="screen" data-screen="transcript" aria-labelledby="transcriptTitle">
+        <div class="status-icon listen" aria-hidden="true">✓</div>
+        <h1 id="transcriptTitle">こう聞こえたよ</h1>
+        <p class="lead">そばのおとなと、内容を確認してね。</p>
+        <label class="field-label" for="transcriptInput">聞き取った内容</label>
+        <textarea id="transcriptInput" rows="4"></textarea>
+        <div class="action-row">
+          <button class="secondary-button" id="retryButton" type="button">もういちど</button>
+          <button class="primary-button" id="confirmButton" type="button">これでOK</button>
+        </div>
+      </section>
+
+      <section class="screen waiting-screen" data-screen="waiting" aria-labelledby="waitingTitle" aria-live="polite">
+        <div class="waiting-face" aria-hidden="true"><span>⌣</span></div>
+        <h1 id="waitingTitle">おへんじをとどける準備をしているよ</h1>
+        <p class="lead">いっしょにゆっくり待とうね</p>
+        <div class="progress-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <button class="text-button" id="cancelButton" type="button">やめる</button>
+      </section>
+
+      <section class="screen" data-screen="response" aria-labelledby="responseTitle">
+        <h1 id="responseTitle">おへんじがとどいたよ</h1>
+        <div class="media-stage" id="mediaStage">
+          <video id="responseVideo" playsinline preload="metadata" hidden></video>
+          <img id="responsePoster" alt="本人同意済みの保護者AIアバター">
+          <div class="neutral-media" id="neutralMedia" hidden aria-hidden="true"><span>!</span></div>
+          <div class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+          <p class="subtitle" id="subtitle"></p>
+        </div>
+        <div class="playback-controls" id="playbackControls">
+          <button class="icon-button large" id="replayButton" type="button" aria-label="もう一度再生する" title="もう一度">↻</button>
+          <button class="icon-button large" id="soundButton" type="button" aria-label="音声を停止する" title="音声">♪</button>
+        </div>
+        <button class="primary-button" id="finishButton" type="button">おわる</button>
+      </section>
+
+      <section class="screen safety-screen" data-screen="safety" aria-labelledby="safetyTitle">
+        <div class="safety-symbol" aria-hidden="true">!</div>
+        <h1 id="safetyTitle">そばのおとなといっしょに確認しよう</h1>
+        <p class="lead">いまのお話を、近くの大人に聞いてもらおうね。</p>
+        <div class="adult-handoff">
+          <p class="section-label">ここからは大人の方へ</p>
+          <p id="adultHandoffMessage">子どものそばで、落ち着いて話を聞いてください。</p>
+        </div>
+        <button class="danger-button" id="adultConfirmButton" type="button">おとなへ切り替える</button>
+      </section>
+
+      <footer class="app-footer">
+        <span>AI生成・本人同意済み素材（デモ）</span>
+        <span id="connectionStatus">接続確認中</span>
+      </footer>
+    </main>
+
+    <dialog id="adultDialog">
+      <div class="dialog-header">
+        <div><p class="section-label">大人向け</p><h2>技術・安全情報</h2></div>
+        <button class="icon-button" id="closeDialog" type="button" aria-label="閉じる">×</button>
+      </div>
+      <p>これは本人同意済み素材を使ったAI生成デモです。本物の保護者とのリアルタイム通話ではありません。</p>
+      <dl class="decision-list" id="decisionList"><dt>状態</dt><dd>まだ判定していません</dd></dl>
+      <h3>匿名技術ログ</h3>
+      <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
+    </dialog>
+
+    <script type="module" src="/app.js?v=5"></script>
+  </body>
+</html>

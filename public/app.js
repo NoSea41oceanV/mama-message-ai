@@ -20,6 +20,7 @@ const confirmButton = document.querySelector("#confirmButton");
 const cancelButton = document.querySelector("#cancelButton");
 const responseTitle = document.querySelector("#responseTitle");
 const responseVideo = document.querySelector("#responseVideo");
+const responseAudio = document.querySelector("#responseAudio");
 const responsePoster = document.querySelector("#responsePoster");
 const neutralMedia = document.querySelector("#neutralMedia");
 const mediaStage = document.querySelector("#mediaStage");
@@ -34,6 +35,9 @@ const adultHandoffMessage = document.querySelector("#adultHandoffMessage");
 const decisionList = document.querySelector("#decisionList");
 const logList = document.querySelector("#logList");
 const connectionStatus = document.querySelector("#connectionStatus");
+const revokeConsent = document.querySelector("#revokeConsent");
+const restoreConsent = document.querySelector("#restoreConsent");
+const consentAdminStatus = document.querySelector("#consentAdminStatus");
 
 const state = {
   screen: "setup",
@@ -165,7 +169,7 @@ async function pollResponse(requestId) {
     if (data.status === "READY") {
       state.response = data;
       renderDecision(data);
-      prepareResponse(data);
+      await prepareResponse(data);
       showScreen("response");
       await playResponse();
       return;
@@ -220,7 +224,26 @@ async function createResponse() {
   }
 }
 
-function prepareResponse(data) {
+function waitForMedia(element, timeoutMs = 5000) {
+  if (element.readyState >= 2) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error("MEDIA_LOAD_TIMEOUT")), timeoutMs);
+    const finish = (error = null) => {
+      clearTimeout(timer);
+      element.removeEventListener("loadeddata", onReady);
+      element.removeEventListener("error", onError);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onReady = () => finish();
+    const onError = () => finish(new Error("MEDIA_LOAD_FAILED"));
+    element.addEventListener("loadeddata", onReady, { once: true });
+    element.addEventListener("error", onError, { once: true });
+    element.load();
+  });
+}
+
+async function prepareResponse(data) {
   const bundle = data.responseBundle;
   subtitle.textContent = bundle.subtitle;
   responseTitle.textContent = bundle.parentLike === false ? "いっしょに確認しよう" : "おへんじがとどいたよ";
@@ -229,15 +252,28 @@ function prepareResponse(data) {
   responseVideo.hidden = !bundle.videoUrl;
   neutralMedia.hidden = Boolean(bundle.videoUrl || bundle.posterUrl);
   mediaStage.classList.toggle("is-neutral", !bundle.videoUrl && !bundle.posterUrl);
-  playbackControls.hidden = !bundle.videoUrl && !bundle.speechSynthesis;
-  voiceBars.hidden = !bundle.videoUrl && !bundle.speechSynthesis;
-  if (bundle.videoUrl) responseVideo.src = bundle.videoUrl;
-  else responseVideo.removeAttribute("src");
+  playbackControls.hidden = !bundle.videoUrl && !bundle.audioUrl && !bundle.speechSynthesis;
+  voiceBars.hidden = !bundle.videoUrl && !bundle.audioUrl && !bundle.speechSynthesis;
+  if (bundle.videoUrl) {
+    responseVideo.src = bundle.videoUrl;
+    await waitForMedia(responseVideo);
+  } else {
+    responseVideo.removeAttribute("src");
+    responseVideo.load();
+  }
+  if (bundle.audioUrl) {
+    responseAudio.src = bundle.audioUrl;
+    await waitForMedia(responseAudio);
+  } else {
+    responseAudio.removeAttribute("src");
+    responseAudio.load();
+  }
 }
 
 function stopSpeech() {
   speechSynthesis.cancel();
   responseVideo.pause();
+  responseAudio.pause();
   mediaStage.classList.remove("is-speaking");
 }
 
@@ -249,6 +285,13 @@ async function playResponse() {
   if (bundle.videoUrl) {
     responseVideo.currentTime = 0;
     await responseVideo.play();
+    return;
+  }
+  if (bundle.audioUrl) {
+    responseAudio.currentTime = 0;
+    responseAudio.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
+    responseAudio.addEventListener("error", () => mediaStage.classList.remove("is-speaking"), { once: true });
+    await responseAudio.play();
     return;
   }
   if (!bundle.speechSynthesis) {
@@ -283,7 +326,7 @@ async function loadLogs() {
     const { logs } = await response.json();
     logList.innerHTML = logs.length ? logs.map((log) => `
       <div class="log-item"><strong>${log.status}</strong> / ${log.route}<br>
-      ${log.model} ・ ${log.latencyMs}ms ・ $${Number(log.costUsd).toFixed(4)} ・ fallback ${log.fallbackLevel ?? "-"}</div>`).join("") : "<p>ログはまだありません。</p>";
+      ${log.model} ・ ${log.latencyMs}ms ・ ${log.costUsd === null ? "cost 未取得" : `${log.estimatedCost ? "demo " : ""}$${Number(log.costUsd).toFixed(4)}`} ・ fallback ${log.fallbackLevel ?? "-"}</div>`).join("") : "<p>ログはまだありません。</p>";
   } catch {
     logList.innerHTML = "<p>ログを読み込めませんでした。</p>";
   }
@@ -295,12 +338,42 @@ function resetFlow() {
   state.pollAbort?.abort();
   state.sessionId = crypto.randomUUID();
   state.transcriptId = null;
+  if (state.requestId) fetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
   state.requestId = null;
   state.response = null;
   transcriptInput.value = "";
+  subtitle.textContent = "";
+  responsePoster.removeAttribute("src");
+  responseVideo.removeAttribute("src");
+  responseVideo.load();
+  responseAudio.removeAttribute("src");
+  responseAudio.load();
   timer.textContent = "00:00";
   setRecordState(false);
   showScreen("setup");
+}
+
+function applyConsent(consent) {
+  state.consent = consent.active ? consent : null;
+  consentDisclosure.textContent = consent.active
+    ? `${consent.subjectLabel} / 本人同意済み素材（デモ）`
+    : "素材利用は停止されています。大人向け画面で確認してください。";
+  consentAdminStatus.textContent = consent.active ? "素材利用: 有効" : "素材利用: 停止中";
+  consentCheck.checked = consent.active ? consentCheck.checked : false;
+  consentCheck.disabled = !consent.active;
+  startSetup.disabled = !consent.active || !consentCheck.checked;
+  revokeConsent.disabled = !consent.active;
+  restoreConsent.disabled = consent.active;
+}
+
+async function updateConsent(action) {
+  const response = await fetch("/api/consent", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!response.ok) throw new Error("同意状態を更新できませんでした");
+  applyConsent(await response.json());
 }
 
 consentCheck.addEventListener("change", () => { startSetup.disabled = !consentCheck.checked || !state.consent; });
@@ -316,6 +389,8 @@ finishButton.addEventListener("click", resetFlow);
 adultConfirmButton.addEventListener("click", async () => { await loadLogs(); adultDialog.showModal(); });
 adultButton.addEventListener("click", async () => { await loadLogs(); adultDialog.showModal(); });
 closeDialog.addEventListener("click", () => adultDialog.close());
+revokeConsent.addEventListener("click", () => updateConsent("revoke").catch((error) => { consentAdminStatus.textContent = error.message; }));
+restoreConsent.addEventListener("click", () => updateConsent("restore").catch((error) => { consentAdminStatus.textContent = error.message; }));
 backButton.addEventListener("click", () => {
   stopSpeech();
   if (state.screen === "record") showScreen("setup");
@@ -327,12 +402,10 @@ window.addEventListener("pagehide", () => { stopTracks(); stopSpeech(); });
 fetch("/api/consent")
   .then((response) => response.json())
   .then((consent) => {
-    state.consent = consent;
-    consentDisclosure.textContent = `${consent.subjectLabel} / ${consent.disclosure}`;
-    startSetup.disabled = !consentCheck.checked;
-    connectionStatus.textContent = "デモ接続済み";
+    applyConsent(consent);
+    connectionStatus.textContent = "じゅんびできたよ";
   })
   .catch(() => {
     consentDisclosure.textContent = "同意情報を確認できません";
-    connectionStatus.textContent = "接続エラー";
+    connectionStatus.textContent = "おとなと確認してね";
   });

@@ -198,6 +198,53 @@ test("demo media degrades through all four ready levels", async () => {
   }
 });
 
+test("LEVEL 1 requires explicit embedded audio", async () => {
+  const provider = createMediaProvider({
+    generatedVideoProvider: async () => ({ videoUrl: "/silent-generated.mp4" }),
+  });
+  const bundle = await provider.generate({
+    safetyLevel: "normal",
+    consentValid: true,
+    replyText: "字幕と音声をそろえるよ。",
+  });
+  assert.equal(bundle.fallbackLevel, 3);
+  assert.equal(bundle.videoUrl, null);
+});
+
+test("generated media timeout falls through to LEVEL 3", async () => {
+  const provider = createMediaProvider({
+    generatedVideoProvider: () => new Promise(() => {}),
+    timeoutMs: 5,
+  });
+  const bundle = await provider.generate({
+    safetyLevel: "normal",
+    consentValid: true,
+    replyText: "待ちすぎずに返すよ。",
+  });
+  assert.equal(bundle.fallbackLevel, 3);
+  assert.equal(bundle.ready, true);
+});
+
+test("LEVEL 3 can use a prepared audio file instead of browser speech", async () => {
+  const provider = createMediaProvider({
+    audioUrlForDecision: (decision) => `/audio/${decision.supportMode}.wav`,
+  });
+  const bundle = await provider.generate({
+    decision: {
+      safetyLevel: "normal",
+      supportMode: "comfort",
+      emotion: ["sadness"],
+      reasonCodes: ["COMFORT_NEEDED"],
+      replyText: "そばにいるよ。",
+    },
+    consentValid: true,
+  });
+  assert.equal(bundle.fallbackLevel, 3);
+  assert.equal(bundle.audioUrl, "/audio/comfort.wav");
+  assert.equal(bundle.speechSynthesis, false);
+  assert.equal(isMediaBundleReady(bundle), true);
+});
+
 test("media is forbidden for non-normal safety or invalid consent", async () => {
   const provider = createMediaProvider({ env: { MEDIA_PROVIDER: "demo" } });
   await assert.rejects(

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#ffffff">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おたすけメッセージ</title>
-    <link rel="stylesheet" href="/styles.css?v=5">
+    <link rel="stylesheet" href="/styles.css?v=9">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -82,7 +82,8 @@
         <h1 id="responseTitle">おへんじがとどいたよ</h1>
         <div class="media-stage" id="mediaStage">
           <video id="responseVideo" playsinline preload="metadata" hidden></video>
-          <img id="responsePoster" alt="本人同意済みの保護者AIアバター">
+          <audio id="responseAudio" preload="auto" hidden></audio>
+          <img id="responsePoster" alt="保護者のメッセージ画像">
           <div class="neutral-media" id="neutralMedia" hidden aria-hidden="true"><span>!</span></div>
           <div class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
           <p class="subtitle" id="subtitle"></p>
@@ -106,7 +107,7 @@
       </section>
 
       <footer class="app-footer">
-        <span>AI生成・本人同意済み素材（デモ）</span>
+        <span>おとなといっしょに使ってね</span>
         <span id="connectionStatus">接続確認中</span>
       </footer>
     </main>
@@ -117,11 +118,16 @@
         <button class="icon-button" id="closeDialog" type="button" aria-label="閉じる">×</button>
       </div>
       <p>これは本人同意済み素材を使ったAI生成デモです。本物の保護者とのリアルタイム通話ではありません。</p>
+      <div class="action-row">
+        <button class="danger-button" id="revokeConsent" type="button">素材利用を停止</button>
+        <button class="secondary-button" id="restoreConsent" type="button">デモ同意を再開</button>
+      </div>
+      <p id="consentAdminStatus" role="status"></p>
       <dl class="decision-list" id="decisionList"><dt>状態</dt><dd>まだ判定していません</dd></dl>
       <h3>匿名技術ログ</h3>
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=5"></script>
+    <script type="module" src="/app.js?v=9"></script>
   </body>
 </html>

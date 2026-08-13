@@ -33,7 +33,7 @@ const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, con
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
 
-const demoConsent = Object.freeze({
+const demoConsent = {
   consentId: "demo-consent-001",
   avatarAssetId: "guardian-demo-001",
   subjectLabel: "デモ保護者",
@@ -41,7 +41,7 @@ const demoConsent = Object.freeze({
   voiceApproved: true,
   active: true,
   disclosure: "AI生成・本人同意済み素材（デモ）",
-});
+};
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -53,14 +53,25 @@ const mimeTypes = {
   ".webp": "image/webp",
   ".mp4": "video/mp4",
   ".webm": "video/webm",
+  ".wav": "audio/wav",
 };
 
 function sendJson(res, statusCode, value) {
   res.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    ...securityHeaders(),
   });
   res.end(JSON.stringify(value));
+}
+
+function securityHeaders() {
+  return {
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "permissions-policy": "camera=(), geolocation=(), payment=(), usb=()",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+  };
 }
 
 async function readJson(req) {
@@ -81,8 +92,8 @@ export function classifyTranscript(transcript) {
     return { safetyLevel: "uncertain", supportMode: "clarify", emotion: ["unknown"], reasonCodes: ["EMPTY_INPUT"] };
   }
 
-  const urgent = /(死にたい|消えたい|息ができない|火事|血が止まらない|今すぐ助けて)/;
-  const adultRequired = /(助けて|叩かれ|殴られ|触られ|痛い|怖い人|帰れない|迷子)/;
+  const urgent = /(死にたい|消えたい|息ができない|火事|血が止まらない|今すぐ助けて|毒を飲んだ|意識がない)/;
+  const adultRequired = /(助けて|叩かれ|殴られ|蹴られ|触られ|痛い|けが|怖い人|帰れない|迷子|ひとりぼっち|知らない人)/;
   if (urgent.test(value)) {
     return { safetyLevel: "urgent", supportMode: "adult_handoff", emotion: ["fear"], reasonCodes: ["URGENT_LANGUAGE"] };
   }
@@ -101,6 +112,12 @@ export function classifyTranscript(transcript) {
   if (/(できない|失敗|むずかしい|自信がない)/.test(value)) {
     return { safetyLevel: "normal", supportMode: "encourage", emotion: ["disappointment"], reasonCodes: ["ENCOURAGEMENT_NEEDED"] };
   }
+  if (/(行きたくない|帰りたくない|お迎え|お別れ|ママが行っちゃった|パパが行っちゃった)/.test(value)) {
+    return { safetyLevel: "normal", supportMode: "transition", emotion: ["anxiety"], reasonCodes: ["TRANSITION_SUPPORT_NEEDED"] };
+  }
+  if (/(おなかすいた|のどかわいた|眠い|トイレ|疲れた)/.test(value)) {
+    return { safetyLevel: "normal", supportMode: "basic_need", emotion: ["discomfort"], reasonCodes: ["BASIC_NEED_SUPPORT_NEEDED"] };
+  }
   return { safetyLevel: "normal", supportMode: "listen", emotion: ["neutral"], reasonCodes: ["GENERAL_LISTENING"] };
 }
 
@@ -110,10 +127,18 @@ export function buildReply(decision) {
     comfort: "お話してくれてありがとう。さみしかったんだね。ゆっくり息をして、そばの大人といっしょにいようね。",
     calm: "お話してくれてありがとう。そう思ってもいいんだよ。ゆっくり息をしてみようね。",
     encourage: "お話してくれてありがとう。がんばったこと、ちゃんと伝わったよ。次の一歩をいっしょに考えようね。",
+    transition: "お話してくれてありがとう。離れるのはさみしいよね。そばのおとなといっしょに、次にすることを一つだけ決めようね。",
+    basic_need: "お話してくれてありがとう。からだのことは大切だよ。そばのおとなに伝えて、いっしょに確かめてもらおうね。",
     listen: "お話してくれてありがとう。あなたのお話を、ちゃんと聞いているよ。",
     clarify: "うまく聞き取れなかったよ。そばの大人と、もう一度お話してみようね。",
   };
   return replies[decision.supportMode] ?? replies.listen;
+}
+
+export function replyIsAllowed(replyText) {
+  const value = String(replyText ?? "").trim();
+  if (!value || value.length > 180) return false;
+  return !/(秘密にして|誰にも言わないで|家を出て|逃げて|薬を飲んで|ママから今届いた|パパから今届いた|本人が送った)/.test(value);
 }
 
 const routerProvider = createOrcaRouterProvider({
@@ -121,11 +146,25 @@ const routerProvider = createOrcaRouterProvider({
   localReplyBuilder: routerMode === "demo" ? buildReply : undefined,
 });
 const sttProvider = createSttProvider();
+const demoReplyAudioUrls = Object.freeze({
+  celebrate: "/assets/audio/celebrate.wav",
+  comfort: "/assets/audio/comfort.wav",
+  calm: "/assets/audio/calm.wav",
+  encourage: "/assets/audio/encourage.wav",
+  transition: "/assets/audio/transition.wav",
+  basic_need: "/assets/audio/basic_need.wav",
+  listen: "/assets/audio/listen.wav",
+  clarify: "/assets/audio/clarify.wav",
+});
 const mediaProvider = createMediaProvider({
   assets: {
     preRecordedVideoUrl: process.env.PREGENERATED_VIDEO_URL || null,
     posterUrl: "/assets/guardian-demo.png",
   },
+  timeoutMs: Math.min(Number(process.env.MEDIA_TIMEOUT_SECONDS || 18), 18) * 1000,
+  audioUrlForDecision: (decision) => routerMode === "demo"
+    ? demoReplyAudioUrls[decision.supportMode] ?? null
+    : null,
 });
 const neutralMediaProvider = createMediaProvider({
   provider: "demo",
@@ -145,6 +184,8 @@ function addTechnicalLog(entry) {
     promptTokens: entry.promptTokens ?? null,
     completionTokens: entry.completionTokens ?? null,
     estimatedCost: entry.estimatedCost ?? true,
+    providerRoute: entry.providerRoute ?? null,
+    failureReason: entry.failureReason ?? null,
     at: new Date().toISOString(),
   });
   technicalLogs.length = Math.min(technicalLogs.length, 50);
@@ -169,9 +210,13 @@ function createAdultHandoff(current, decision, adultMessage) {
     route: "safety_escalation",
     status: "ADULT_HANDOFF",
     routerDecision: decision,
+    safetyLevel: decision.safetyLevel,
+    supportMode: decision.supportMode,
+    emotion: decision.emotion,
     childMessage: "そばのおとなといっしょに確認しよう",
     adultMessage,
     responseBundle: null,
+    bundle: null,
     completedAt: new Date().toISOString(),
   };
 }
@@ -181,6 +226,18 @@ function readUsage(metadata) {
   return {
     promptTokens: usage.prompt_tokens ?? usage.input_tokens ?? null,
     completionTokens: usage.completion_tokens ?? usage.output_tokens ?? null,
+  };
+}
+
+function readProviderMetrics(metadata) {
+  if (routerMode === "demo") return { costUsd: 0, estimatedCost: true, providerRoute: "local-demo" };
+  const headers = metadata?.headers ?? {};
+  const rawCost = headers["x-orca-cost-usd"] ?? headers["x-orca-cost"] ?? null;
+  const parsedCost = rawCost === null ? null : Number(rawCost);
+  return {
+    costUsd: Number.isFinite(parsedCost) ? parsedCost : null,
+    estimatedCost: !Number.isFinite(parsedCost),
+    providerRoute: headers["x-orca-route"] ?? headers["x-orca-provider"] ?? null,
   };
 }
 
@@ -236,10 +293,28 @@ async function finishResponse(requestId, input, startedAt) {
       requestId,
       route: "router_handoff",
       model: routed.metadata?.resolvedModel || routed.metadata?.requestedModel || routed.metadata?.provider || "router-unavailable",
-      costUsd: 0,
+      ...readProviderMetrics(routed.metadata),
       latencyMs: Date.now() - startedAt,
       status: result.status,
       ...readUsage(routed.metadata),
+    });
+    return;
+  }
+
+  if (!replyIsAllowed(decision.replyText)) {
+    const result = createAdultHandoff(
+      current,
+      { ...decision, safetyLevel: "uncertain", supportMode: "adult_handoff", reasonCodes: ["REPLY_POLICY_REJECTED"] },
+      "返答内容を安全に確認できませんでした。子どものそばで話を聞き、必要に応じてもう一度試してください。",
+    );
+    responses.set(requestId, result);
+    addTechnicalLog({
+      requestId,
+      route: "reply_policy_handoff",
+      model: routed.metadata?.resolvedModel || routed.metadata?.provider || "router",
+      ...readProviderMetrics(routed.metadata),
+      latencyMs: Date.now() - startedAt,
+      status: result.status,
     });
     return;
   }
@@ -272,8 +347,12 @@ async function finishResponse(requestId, input, startedAt) {
     route: "generate_guardian_message",
     status: "READY",
     routerDecision: decision,
+    safetyLevel: decision.safetyLevel,
+    supportMode: decision.supportMode,
+    emotion: decision.emotion,
     replyText: responseBundle.parentLike ? decision.replyText : null,
     responseBundle,
+    bundle: responseBundle,
     completedAt: new Date().toISOString(),
   };
   responses.set(requestId, result);
@@ -281,7 +360,7 @@ async function finishResponse(requestId, input, startedAt) {
     requestId,
     route: responseBundle.fallbackLevel === 4 ? "neutral_fallback" : "guardian_media",
     model: routed.metadata?.resolvedModel || routed.metadata?.requestedModel || routed.metadata?.provider || "local-router",
-    costUsd: 0,
+    ...readProviderMetrics(routed.metadata),
     latencyMs: Date.now() - startedAt,
     status: result.status,
     fallbackLevel: responseBundle.fallbackLevel,
@@ -305,6 +384,20 @@ async function apiHandler(req, res, url) {
   }
   if (req.method === "GET" && url.pathname === "/api/consent") {
     sendJson(res, 200, demoConsent);
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/consent") {
+    try {
+      const input = await readJson(req);
+      if (!new Set(["revoke", "restore"]).has(input.action)) {
+        sendJson(res, 400, { error: "CONSENT_ACTION_INVALID" });
+        return true;
+      }
+      demoConsent.active = input.action === "restore";
+      sendJson(res, 200, demoConsent);
+    } catch {
+      sendJson(res, 400, { error: "CONSENT_REQUEST_INVALID" });
+    }
     return true;
   }
 
@@ -334,8 +427,18 @@ async function apiHandler(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/responses") {
     try {
       const input = await readJson(req);
-      if (!String(input.confirmedTranscript ?? "").trim()) {
+      input.confirmedTranscript = String(input.confirmedTranscript ?? "").trim();
+      if (!input.confirmedTranscript) {
         sendJson(res, 400, { error: "CONFIRMED_TRANSCRIPT_REQUIRED" });
+        return true;
+      }
+      if (input.confirmedTranscript.length > 500) {
+        sendJson(res, 400, { error: "CONFIRMED_TRANSCRIPT_TOO_LONG" });
+        return true;
+      }
+      const requiredIds = ["sessionId", "transcriptId", "consentId", "avatarAssetId", "idempotencyKey"];
+      if (requiredIds.some((name) => typeof input[name] !== "string" || !input[name].trim())) {
+        sendJson(res, 400, { error: "RESPONSE_IDENTIFIERS_REQUIRED" });
         return true;
       }
       const key = String(input.idempotencyKey || `${input.sessionId}:${input.transcriptId}`);
@@ -378,6 +481,15 @@ async function apiHandler(req, res, url) {
     sendJson(res, record ? 200 : 404, record ?? { error: "NOT_FOUND" });
     return true;
   }
+  if (req.method === "DELETE" && responseMatch) {
+    const requestId = responseMatch[1];
+    const existed = responses.delete(requestId);
+    for (const [key, storedRequestId] of idempotency) {
+      if (storedRequestId === requestId) idempotency.delete(key);
+    }
+    sendJson(res, existed ? 200 : 404, existed ? { deleted: true } : { error: "NOT_FOUND" });
+    return true;
+  }
 
   if (req.method === "GET" && url.pathname === "/api/logs") {
     sendJson(res, 200, { logs: technicalLogs });
@@ -401,6 +513,7 @@ async function serveStatic(res, pathname) {
     res.writeHead(200, {
       "content-type": mimeTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream",
       "cache-control": "no-store",
+      ...securityHeaders(),
     });
     createReadStream(filePath).pipe(res);
   } catch {

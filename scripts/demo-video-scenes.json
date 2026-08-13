@@ -1,0 +1,72 @@
+[
+  {
+    "duration": 12,
+    "title": "保護者AIメッセージ",
+    "caption": "3〜6歳の子どもと、そばにいる大人のための安心体験",
+    "image": "/screenshots/00-setup-mobile.png",
+    "narration": "AI HACK 2026。これは、3歳から6歳の子どもと、そばにいる大人のための、保護者AIメッセージです。"
+  },
+  {
+    "duration": 16,
+    "title": "離れていても、寄り添うきっかけを",
+    "caption": "AIに任せきらず、その場の大人の関わりを支える",
+    "image": "/spec/use-scene.png",
+    "narration": "仕事や出張などで保護者がその場にいない時、子どもの気持ちをAIに任せきるのではなく、同席する大人が寄り添うきっかけを作ります。"
+  },
+  {
+    "duration": 15,
+    "title": "子どもの主入力は音声",
+    "caption": "大きなマイク、15秒制限、短い案内",
+    "image": "/screenshots/05-record-mobile.png",
+    "narration": "子どもの主入力は音声です。大きなマイクを押して話し、録音は15秒で自動停止します。長い説明や専門用語は見せません。"
+  },
+  {
+    "duration": 14,
+    "title": "送る前に、大人が確認",
+    "caption": "STT結果を確認して、誤認識をそのまま送らない",
+    "image": "/screenshots/06-transcript-mobile.png",
+    "narration": "音声はサーバー側で文字にし、同席する大人が認識結果を確認します。誤認識をそのまま判断や返答生成へ流さない設計です。"
+  },
+  {
+    "duration": 20,
+    "title": "通常返答はLEVEL 3",
+    "caption": "本人同意済み静止画 + ブラウザ音声 + 字幕",
+    "image": "/screenshots/01-normal-level3-mobile.png",
+    "narration": "通常デモでは、本人同意済みの静止画、ブラウザ音声、字幕がそろってから、一つの返答として届けます。リアルタイムの保護者通話ではなく、AI生成デモであることを大人向けに明示しています。"
+  },
+  {
+    "duration": 18,
+    "title": "OrcaRouterは監督役",
+    "caption": "安全度・支援方法・感情をstructured outputsで返す",
+    "image": "/screenshots/07-technical-log-mobile.png",
+    "narration": "OrcaRouterは動画生成器ではありません。安全度、支援方法、感情などを構造化し、通常メディアか安全引き継ぎかを監督します。ログには経路、モデル、原価、時間、状態だけを残し、会話本文は保存しません。"
+  },
+  {
+    "duration": 17,
+    "title": "失敗しても止めない4段階",
+    "caption": "生成動画 → 事前動画 → 静止画と音声 → 中立案内",
+    "image": "/screenshots/04-setup-desktop.png",
+    "narration": "返答メディアは4段階です。生成動画、事前動画、静止画と音声、そして中立案内へ段階的に縮退します。利用できない動画を成功扱いせず、準備できた組み合わせだけを再生します。"
+  },
+  {
+    "duration": 20,
+    "title": "生成失敗はLEVEL 4へ",
+    "caption": "顔も保護者風音声も出さず、中立的に案内",
+    "image": "/screenshots/02-failure-level4-mobile.png",
+    "narration": "生成に失敗した時は、低品質な保護者動画を見せません。LEVEL 4では保護者の顔、声、再生操作を外し、そばにいる大人と確認する中立案内へ切り替えます。"
+  },
+  {
+    "duration": 21,
+    "title": "安全時は大人へ引き継ぐ",
+    "caption": "外部ルーターより前に止め、保護者らしいメディアを禁止",
+    "image": "/screenshots/03-safety-handoff-mobile.png",
+    "narration": "危険や深刻な相談は、外部ルーターへ送る前の安全ゲートで止めます。判定不能や同意不備も大人へ引き継ぎ、通常返信、保護者風の顔や声、動画生成を行いません。"
+  },
+  {
+    "duration": 17,
+    "title": "AIが作り、人が最終判断する",
+    "caption": "18テスト成功 / 3シナリオ確認 / 公開・送信は人間承認後",
+    "image": "/screenshots/00-setup-mobile.png",
+    "narration": "実装、テスト、資料、記事と台本はCodexが担当しました。自動テスト18件と3つのデモシナリオを確認済みです。外部APIの実測、公開、最終送信は、人間の承認後に行います。ありがとうございました。"
+  }
+]

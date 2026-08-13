@@ -65,6 +65,7 @@ APIキーや保護者素材はコミットしません。実値は各自の `.en
 
 - [記事下書き](docs/submission/ARTICLE_DRAFT.md)
 - [3分デモ台本](docs/submission/DEMO_SCRIPT_3MIN.md)
+- [生成済み3分デモ動画の情報](docs/submission/video/README.md)
 - [最終レビューチェックリスト](docs/submission/FINAL_REVIEW_CHECKLIST.md)
 - [確認用スクリーンショット](docs/submission/screenshots/)
 

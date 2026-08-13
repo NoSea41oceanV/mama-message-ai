@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>AI HACK 2026 Demo Video Renderer</title>
+  <style>
+    body { margin: 0; display: grid; min-height: 100vh; place-items: center; background: #151a20; color: white; font-family: "Yu Gothic UI", sans-serif; }
+    main { display: grid; gap: 16px; justify-items: center; }
+    canvas { width: min(96vw, 1280px); aspect-ratio: 16 / 9; background: white; box-shadow: 0 20px 60px #0008; }
+    button { padding: 12px 24px; border: 0; border-radius: 6px; background: #2477ed; color: white; font: 700 16px inherit; }
+    output { min-height: 24px; }
+  </style>
+</head>
+<body>
+  <main>
+    <canvas id="canvas" width="1280" height="720"></canvas>
+    <button id="start" type="button">170秒のレビュー動画を生成</button>
+    <output id="status">準備中</output>
+  </main>
+  <script type="module">
+    const canvas = document.querySelector("#canvas");
+    const context = canvas.getContext("2d");
+    const startButton = document.querySelector("#start");
+    const status = document.querySelector("#status");
+    const scenes = await (await fetch("/scenes.json")).json();
+    const totalDuration = scenes.reduce((sum, scene) => sum + scene.duration, 0);
+    let elapsed = 0;
+    for (const scene of scenes) {
+      scene.start = elapsed;
+      scene.end = elapsed + scene.duration;
+      elapsed = scene.end;
+      scene.bitmap = await createImageBitmap(await (await fetch(scene.image)).blob());
+      scene.audio = await (await fetch(`/audio/scene-${String(scenes.indexOf(scene) + 1).padStart(2, "0")}.wav`)).arrayBuffer();
+    }
+
+    function wrapText(text, maxChars) {
+      const rows = [];
+      let row = "";
+      for (const char of text) {
+        row += char;
+        if (row.length >= maxChars || char === "、" || char === "。") {
+          rows.push(row);
+          row = "";
+        }
+      }
+      if (row) rows.push(row);
+      return rows;
+    }
+
+    function drawImageContain(image, x, y, width, height) {
+      const scale = Math.min(width / image.width, height / image.height);
+      const drawWidth = image.width * scale;
+      const drawHeight = image.height * scale;
+      context.drawImage(image, x + (width - drawWidth) / 2, y + (height - drawHeight) / 2, drawWidth, drawHeight);
+    }
+
+    function draw(time) {
+      const scene = scenes.find((item) => time >= item.start && time < item.end) ?? scenes.at(-1);
+      const local = Math.max(0, time - scene.start);
+      const fade = Math.min(1, local / 0.55, (scene.end - time) / 0.55);
+      context.fillStyle = "#eef2f6";
+      context.fillRect(0, 0, 1280, 720);
+      context.fillStyle = "#ffffff";
+      context.fillRect(28, 28, 1224, 664);
+      context.fillStyle = "#219967";
+      context.fillRect(72, 74, 14, 14);
+      context.fillStyle = "#18324a";
+      context.font = "700 22px 'Yu Gothic UI'";
+      context.fillText("AI HACK 2026 / 保護者AIメッセージ", 102, 89);
+
+      context.save();
+      context.globalAlpha = Math.max(0, fade);
+      context.fillStyle = "#171a1d";
+      context.font = "800 46px 'Yu Gothic UI'";
+      const titleRows = wrapText(scene.title, 14);
+      titleRows.forEach((row, index) => context.fillText(row, 72, 190 + index * 64));
+      context.fillStyle = "#5f6b77";
+      context.font = "500 24px 'Yu Gothic UI'";
+      const captionRows = wrapText(scene.caption, 20);
+      captionRows.forEach((row, index) => context.fillText(row, 72, 340 + index * 42));
+      context.fillStyle = "#2477ed";
+      context.fillRect(72, 512, 120, 6);
+      context.fillStyle = "#6b7480";
+      context.font = "600 18px 'Yu Gothic UI'";
+      context.fillText(`${String(scenes.indexOf(scene) + 1).padStart(2, "0")} / ${scenes.length}`, 72, 560);
+      context.fillStyle = "#f7f9fb";
+      context.fillRect(650, 76, 536, 568);
+      drawImageContain(scene.bitmap, 672, 92, 492, 536);
+      context.restore();
+
+      context.fillStyle = "#d9dfe6";
+      context.fillRect(72, 650, 1116, 4);
+      context.fillStyle = "#2477ed";
+      context.fillRect(72, 650, 1116 * Math.min(1, time / totalDuration), 4);
+    }
+
+    draw(0);
+    status.textContent = `準備完了 / ${totalDuration}秒`;
+
+    startButton.addEventListener("click", async () => {
+      startButton.disabled = true;
+      const audioContext = new AudioContext();
+      await audioContext.resume();
+      const audioDestination = audioContext.createMediaStreamDestination();
+      const canvasStream = canvas.captureStream(30);
+      const stream = new MediaStream([...canvasStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
+      const mimeType = ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus", "video/webm"]
+        .find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 3_500_000, audioBitsPerSecond: 128_000 });
+      const chunks = [];
+      recorder.addEventListener("dataavailable", (event) => { if (event.data.size) chunks.push(event.data); });
+      const stopped = new Promise((resolve) => recorder.addEventListener("stop", resolve, { once: true }));
+      const baseTime = audioContext.currentTime + 0.4;
+      for (const scene of scenes) {
+        const source = audioContext.createBufferSource();
+        source.buffer = await audioContext.decodeAudioData(scene.audio.slice(0));
+        source.connect(audioDestination);
+        source.connect(audioContext.destination);
+        source.start(baseTime + scene.start);
+      }
+      recorder.start(1000);
+      const startedAt = performance.now();
+      await new Promise((resolve) => {
+        function frame(now) {
+          const seconds = (now - startedAt) / 1000;
+          draw(seconds);
+          status.textContent = `録画中 ${Math.min(totalDuration, seconds).toFixed(1)} / ${totalDuration}秒`;
+          if (seconds >= totalDuration) resolve();
+          else requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      });
+      recorder.stop();
+      await stopped;
+      const video = new Blob(chunks, { type: recorder.mimeType });
+      status.textContent = `保存中 ${(video.size / 1024 / 1024).toFixed(1)} MB`;
+      const response = await fetch("/upload", { method: "POST", headers: { "content-type": video.type }, body: video });
+      if (!response.ok) throw new Error(await response.text());
+      status.textContent = "生成完了";
+      document.title = "DONE - AI HACK 2026 Demo Video";
+      await audioContext.close();
+    }, { once: true });
+  </script>
+</body>
+</html>

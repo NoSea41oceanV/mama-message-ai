@@ -18,6 +18,10 @@ tmp/
 .social-research/
 *.log
 
+# Locally rendered review video and intermediate media (publish via YouTube, not Git)
+docs/submission/video/*
+!docs/submission/video/README.md
+
 # Generated presentation inspection and renders
 *.inspect.ndjson
 *-renders/

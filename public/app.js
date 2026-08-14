@@ -71,6 +71,7 @@ const samplingStatus = document.querySelector("#samplingStatus");
 const sampleVideoBadge = document.querySelector("#sampleVideoBadge");
 const sampleVideoPreview = document.querySelector("#sampleVideoPreview");
 const videoConsentCheck = document.querySelector("#videoConsentCheck");
+const videoConsentDescription = document.querySelector("#videoConsentDescription");
 const generateVideoButton = document.querySelector("#generateVideoButton");
 const videoGenerationStatus = document.querySelector("#videoGenerationStatus");
 
@@ -130,6 +131,14 @@ const state = {
   videoGenerationBusy: false,
   videoGenerationPollingJobId: null,
   videoGenerationPollAbort: null,
+  liveAvatar: null,
+  liveAvatarSession: null,
+  liveAvatarStartPromise: null,
+  liveAvatarStreamReady: false,
+  liveAvatarSpeaking: false,
+  liveAvatarExpiresAt: 0,
+  liveAvatarKeepAliveTimer: null,
+  liveAvatarPcmCache: new Map(),
   responseUtterance: null,
 };
 
@@ -139,7 +148,10 @@ for (let index = 0; index < 27; index += 1) {
 }
 
 function showScreen(name) {
-  if (state.screen === "response" && name !== "response") stopSpeech();
+  if (state.screen === "response" && name !== "response") {
+    stopSpeech();
+    void stopLiveAvatarSession();
+  }
   state.screen = name;
   screens.forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === name));
   backButton.disabled = ["setup", "waiting"].includes(name);
@@ -355,6 +367,33 @@ function friendlyVideoFailureMessage(message) {
 }
 
 function renderVideoGeneration(value = state.sample) {
+  const liveAvatar = value?.liveAvatar ?? state.sample?.liveAvatar ?? null;
+  if (liveAvatar) {
+    state.liveAvatar = liveAvatar;
+    const active = Boolean(state.sample?.configured && state.sample?.active);
+    sampleVideoPreview.hidden = true;
+    sampleVideoPreview.removeAttribute("src");
+    sampleVideoPreview.load();
+    generateVideoButton.hidden = true;
+    videoConsentCheck.disabled = !active || liveAvatar.configured !== true;
+    sampleVideoBadge.classList.toggle("is-ready", liveAvatar.configured === true);
+    sampleVideoBadge.classList.remove("is-progress", "is-failed");
+
+    if (!liveAvatar.configured) {
+      sampleVideoBadge.textContent = "未接続";
+      videoConsentDescription.textContent = "返信音声をLiveAvatarへ送信し、リアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = "LiveAvatarへ接続できません。API設定を確認してください。";
+    } else if (liveAvatar.customAvatarConfigured) {
+      sampleVideoBadge.textContent = "本人設定済み";
+      videoConsentDescription.textContent = "返信音声を本人のLiveAvatarへ送信し、リアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = "本人のLiveAvatarへ接続できます。チェックを入れると、次の返答からリアルタイム動画を使います。";
+    } else {
+      sampleVideoBadge.textContent = "テスト接続済み";
+      videoConsentDescription.textContent = "返信音声をLiveAvatarの公開テストアバターへ送信し、動作確認することに同意します";
+      videoGenerationStatus.textContent = "API接続済みです。現在は公開テストアバターです。本人のLiveAvatarはまだ作成されていません。";
+    }
+    return;
+  }
   const generation = normalizeVideoGeneration(value);
   state.videoGeneration = generation;
   const active = Boolean(state.sample?.configured && state.sample?.active);
@@ -704,6 +743,9 @@ async function transcribe({ blob = null, useDemo = false, stayOnResponse = false
 
 async function stopRecording() {
   if (!state.mediaRecorder || state.mediaRecorder.state === "inactive") return;
+  if (state.recordingContext === "response" && state.liveAvatarStreamReady) {
+    state.liveAvatarSession?.stopListening();
+  }
   state.mediaRecorder.stop();
   setRecordState(false);
   stopTracks();
@@ -716,6 +758,7 @@ async function startRecording(context = "record") {
   errorTarget.textContent = "";
   if (stayOnResponse) {
     stopSpeech();
+    if (state.liveAvatarStreamReady) state.liveAvatarSession?.startListening();
     responseTranscriptConfirm.hidden = true;
     responseTranscriptInput.value = "";
   }
@@ -875,17 +918,228 @@ function waitForMedia(element, timeoutMs = 5000) {
   });
 }
 
+function liveAvatarCanPlay(data = state.response) {
+  return Boolean(
+    data?.liveAvatar?.eligible
+    && videoConsentCheck.checked
+    && data?.responseBundle?.audioUrl
+    && globalThis.LiveAvatarSDK?.LiveAvatarSession,
+  );
+}
+
+async function responseAudioAsPcm24k(audioUrl) {
+  if (state.liveAvatarPcmCache.has(audioUrl)) return state.liveAvatarPcmCache.get(audioUrl);
+  const response = await fetch(audioUrl, { cache: "no-store" });
+  if (!response.ok) throw new Error("LIVEAVATAR_AUDIO_FETCH_FAILED");
+  const encoded = await response.arrayBuffer();
+  const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+  if (!AudioContextClass || !globalThis.OfflineAudioContext) {
+    throw new Error("LIVEAVATAR_AUDIO_CONVERSION_UNAVAILABLE");
+  }
+  const context = new AudioContextClass();
+  let decoded;
+  try {
+    decoded = await context.decodeAudioData(encoded.slice(0));
+  } finally {
+    await context.close().catch(() => {});
+  }
+  const frameCount = Math.max(1, Math.ceil(decoded.duration * 24_000));
+  const offline = new OfflineAudioContext(1, frameCount, 24_000);
+  const source = offline.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offline.destination);
+  source.start();
+  const rendered = await offline.startRendering();
+  const samples = rendered.getChannelData(0);
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  let pcm = "";
+  for (let offset = 0; offset < bytes.length; offset += 8192) {
+    pcm += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
+  }
+  state.liveAvatarPcmCache.set(audioUrl, pcm);
+  return pcm;
+}
+
+async function stopLiveAvatarSession() {
+  clearInterval(state.liveAvatarKeepAliveTimer);
+  state.liveAvatarKeepAliveTimer = null;
+  const session = state.liveAvatarSession;
+  state.liveAvatarSession = null;
+  state.liveAvatarStartPromise = null;
+  state.liveAvatarStreamReady = false;
+  state.liveAvatarSpeaking = false;
+  state.liveAvatarExpiresAt = 0;
+  if (session) await session.stop().catch(() => {});
+  responseVideo.srcObject = null;
+}
+
+async function startLiveAvatarSession() {
+  const SDK = globalThis.LiveAvatarSDK;
+  if (!SDK?.LiveAvatarSession) throw new Error("LIVEAVATAR_SDK_UNAVAILABLE");
+  if (state.liveAvatarSession?.state === SDK.SessionState?.CONNECTED && state.liveAvatarStreamReady) {
+    if (state.liveAvatarExpiresAt - Date.now() > 30_000) return state.liveAvatarSession;
+    await stopLiveAvatarSession();
+  }
+  if (state.liveAvatarStartPromise) return state.liveAvatarStartPromise;
+
+  state.liveAvatarStartPromise = (async () => {
+    let response;
+    try {
+      response = await profileFetch("/api/liveavatar/session-token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          consentId: state.consent?.consentId,
+          avatarAssetId: state.consent?.avatarAssetId,
+          externalProcessingApproved: videoConsentCheck.checked,
+        }),
+      });
+    } catch {
+      throw new Error("LIVEAVATAR_TOKEN_NETWORK_FAILED");
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.sessionToken) {
+      const code = /^[A-Z0-9_]{1,80}$/.test(payload.error) ? payload.error : "LIVEAVATAR_TOKEN_FAILED";
+      throw new Error(code);
+    }
+    const maxSessionDuration = Math.max(30, Number(payload.maxSessionDuration) || 60);
+
+    const session = new SDK.LiveAvatarSession(payload.sessionToken, {
+      voiceChat: false,
+      apiUrl: payload.apiUrl,
+    });
+    state.liveAvatarSession = session;
+    const readyEvent = SDK.SessionEvent?.SESSION_STREAM_READY ?? "session.stream_ready";
+    const disconnectedEvent = SDK.SessionEvent?.SESSION_DISCONNECTED ?? "session.disconnected";
+    const streamReady = new Promise((resolve) => session.once(readyEvent, resolve));
+    session.on(disconnectedEvent, () => {
+      if (state.liveAvatarSession !== session) return;
+      const shouldResumeAudio = state.liveAvatarSpeaking
+        && state.screen === "response"
+        && Boolean(state.response?.responseBundle?.audioUrl);
+      clearInterval(state.liveAvatarKeepAliveTimer);
+      state.liveAvatarKeepAliveTimer = null;
+      state.liveAvatarSession = null;
+      state.liveAvatarStartPromise = null;
+      state.liveAvatarStreamReady = false;
+      state.liveAvatarSpeaking = false;
+      state.liveAvatarExpiresAt = 0;
+      responseVideo.srcObject = null;
+      responseVideo.hidden = true;
+      const posterUrl = state.response?.responseBundle?.posterUrl;
+      guardianPortrait.hidden = !posterUrl;
+      neutralMedia.hidden = Boolean(posterUrl);
+      if (shouldResumeAudio) {
+        responseRecordError.textContent = "どうががとまったので、おとのおへんじにきりかえたよ。";
+        responseAudio.currentTime = 0;
+        responseAudio.play().catch(() => mediaStage.classList.remove("is-speaking"));
+      }
+    });
+    session.on(SDK.AgentEventsEnum?.AVATAR_SPEAK_STARTED ?? "avatar.speak_started", () => {
+      state.liveAvatarSpeaking = true;
+      mediaStage.classList.add("is-speaking");
+    });
+    session.on(SDK.AgentEventsEnum?.AVATAR_SPEAK_ENDED ?? "avatar.speak_ended", () => {
+      state.liveAvatarSpeaking = false;
+      mediaStage.classList.remove("is-speaking");
+    });
+    let connectionTimer;
+    try {
+      await Promise.race([
+        (async () => {
+          try {
+            await session.start();
+          } catch {
+            throw new Error("LIVEAVATAR_SESSION_START_FAILED");
+          }
+          await streamReady;
+        })(),
+        new Promise((_, reject) => {
+          connectionTimer = setTimeout(() => reject(new Error("LIVEAVATAR_STREAM_TIMEOUT")), 25_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(connectionTimer);
+    }
+    try {
+      session.attach(responseVideo);
+    } catch {
+      throw new Error("LIVEAVATAR_STREAM_ATTACH_FAILED");
+    }
+    responseVideo.hidden = false;
+    responseVideo.muted = false;
+    responseVideo.autoplay = true;
+    responseVideo.playsInline = true;
+    try {
+      await responseVideo.play();
+    } catch {
+      throw new Error("LIVEAVATAR_VIDEO_PLAY_FAILED");
+    }
+    state.liveAvatarStreamReady = true;
+    state.liveAvatarExpiresAt = Date.now() + (maxSessionDuration * 1000);
+    state.liveAvatarKeepAliveTimer = setInterval(() => session.keepAlive().catch(() => {}), 120_000);
+    return session;
+  })();
+
+  try {
+    return await state.liveAvatarStartPromise;
+  } catch (error) {
+    await stopLiveAvatarSession();
+    throw error;
+  } finally {
+    state.liveAvatarStartPromise = null;
+  }
+}
+
+async function playLiveAvatar(bundle) {
+  if (!liveAvatarCanPlay()) return false;
+  try {
+    delete responseRecordError.dataset.liveAvatarError;
+    responseTalkLead.textContent = "りあるたいむどうがを じゅんびしているよ";
+    const [session, pcm] = await Promise.all([
+      startLiveAvatarSession(),
+      responseAudioAsPcm24k(bundle.audioUrl),
+    ]);
+    guardianPortrait.hidden = true;
+    neutralMedia.hidden = true;
+    responseVideo.hidden = false;
+    responseAudio.pause();
+    session.interrupt();
+    session.repeatAudio(pcm);
+    responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+    return true;
+  } catch (error) {
+    const errorCode = /^[A-Z0-9_]{1,80}$/.test(error?.message)
+      ? error.message
+      : "LIVEAVATAR_UNKNOWN_FAILED";
+    responseRecordError.dataset.liveAvatarError = errorCode;
+    console.warn("LiveAvatar fallback", errorCode);
+    responseRecordError.textContent = "どうがにつながらなかったので、おとのおへんじにきりかえたよ。";
+    responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+    await stopLiveAvatarSession();
+    guardianPortrait.hidden = !bundle.posterUrl;
+    responseVideo.hidden = true;
+    return false;
+  }
+}
+
 async function prepareResponse(data) {
   const bundle = data.responseBundle;
+  const keepLiveStream = liveAvatarCanPlay(data) && state.liveAvatarStreamReady;
   const responseScreen = document.querySelector('[data-screen="response"]');
   responseScreen.dataset.supportMode = data.supportMode ?? data.routerDecision?.supportMode ?? "listen";
   responseScreen.classList.toggle("is-neutral-response", bundle.parentLike === false);
   subtitle.textContent = bundle.subtitle;
   responseTitle.textContent = bundle.parentLike === false ? "いっしょに確認しよう" : "おへんじがとどいたよ";
   responsePoster.src = bundle.posterUrl ?? "";
-  guardianPortrait.hidden = Boolean(bundle.videoUrl) || !bundle.posterUrl;
-  responseVideo.hidden = !bundle.videoUrl;
-  neutralMedia.hidden = Boolean(bundle.videoUrl || bundle.posterUrl);
+  guardianPortrait.hidden = keepLiveStream || Boolean(bundle.videoUrl) || !bundle.posterUrl;
+  responseVideo.hidden = !keepLiveStream && !bundle.videoUrl;
+  neutralMedia.hidden = keepLiveStream || Boolean(bundle.videoUrl || bundle.posterUrl);
   mediaStage.classList.toggle("is-neutral", !bundle.videoUrl && !bundle.posterUrl);
   playbackControls.hidden = !bundle.videoUrl && !bundle.audioUrl && !bundle.speechSynthesis;
   voiceBars.hidden = !bundle.videoUrl && !bundle.audioUrl && !bundle.speechSynthesis;
@@ -896,8 +1150,10 @@ async function prepareResponse(data) {
     responseVideo.muted = bundle.audioInVideo !== true;
     await waitForMedia(responseVideo);
   } else {
-    responseVideo.removeAttribute("src");
-    responseVideo.load();
+    if (!keepLiveStream) {
+      responseVideo.removeAttribute("src");
+      responseVideo.load();
+    }
   }
   if (bundle.audioUrl) {
     responseAudio.src = bundle.audioUrl;
@@ -911,7 +1167,8 @@ async function prepareResponse(data) {
 function stopSpeech() {
   speechSynthesis.cancel();
   state.responseUtterance = null;
-  responseVideo.pause();
+  if (state.liveAvatarStreamReady) state.liveAvatarSession?.interrupt();
+  else responseVideo.pause();
   responseAudio.pause();
   mediaStage.classList.remove("is-speaking");
 }
@@ -920,6 +1177,7 @@ async function playResponse() {
   if (!state.response?.responseBundle) return;
   stopSpeech();
   const bundle = state.response.responseBundle;
+  if (await playLiveAvatar(bundle)) return;
   const hasVideo = Boolean(bundle.videoUrl);
   mediaStage.classList.add("is-speaking");
   if (hasVideo) {
@@ -999,6 +1257,8 @@ async function loadLogs() {
 
 function resetFlow() {
   stopSpeech();
+  void stopLiveAvatarSession();
+  state.liveAvatarPcmCache.clear();
   stopTracks();
   state.pollAbort?.abort();
   const endedConversationId = state.conversationId;
@@ -1158,22 +1418,20 @@ window.addEventListener("pagehide", () => {
   stopTracks();
   stopSampleTracks();
   stopSpeech();
+  void stopLiveAvatarSession();
 });
 responseAudio.addEventListener("pause", () => {
   if (!state.response?.responseBundle?.audioUrl) return;
   if (state.response.responseBundle.videoUrl) responseVideo.pause();
-  stopPortraitAnimation();
 });
 responseAudio.addEventListener("ended", () => {
   if (!state.response?.responseBundle?.audioUrl) return;
   if (state.response.responseBundle.videoUrl) responseVideo.pause();
-  stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 });
 responseAudio.addEventListener("error", () => {
   if (!state.response?.responseBundle?.audioUrl) return;
   if (state.response.responseBundle.videoUrl) responseVideo.pause();
-  stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 });
 

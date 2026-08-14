@@ -20,6 +20,11 @@ import {
   createHeyGenVideoProvider,
   heyGenMotionForDecision,
 } from "../lib/providers/heygen-video.mjs";
+import {
+  LIVEAVATAR_SANDBOX_AVATAR_ID,
+  LiveAvatarProviderError,
+  createLiveAvatarProvider,
+} from "../lib/providers/liveavatar.mjs";
 import { SttProviderError, createSttProvider } from "../lib/providers/stt.mjs";
 import { ElevenLabsError, createElevenLabsProvider } from "../lib/providers/elevenlabs.mjs";
 import {
@@ -593,6 +598,76 @@ test("HeyGen preserves a sanitized render failure code for diagnostics", async (
     (error) => error instanceof HeyGenVideoProviderError
       && error.code === "HEYGEN_VIDEO_FAILED"
       && error.providerCode === "invalid_avatar",
+  );
+});
+
+test("LiveAvatar creates a sandbox LITE token without exposing the API key", async () => {
+  let request;
+  const provider = createLiveAvatarProvider({
+    env: {
+      LIVEAVATAR_API_KEY: "liveavatar-secret",
+      LIVEAVATAR_SANDBOX: "true",
+      LIVEAVATAR_BASE_URL: "https://api.liveavatar.test",
+    },
+    fetchImpl: async (url, init) => {
+      request = { url, init, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        code: 1000,
+        data: { session_id: "session-1", session_token: "short-lived-token" },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const result = await provider.createSessionToken();
+  assert.equal(provider.available, true);
+  assert.equal(provider.status().status, "sandbox");
+  assert.equal(request.url, "https://api.liveavatar.test/v1/sessions/token");
+  assert.equal(request.init.headers["X-API-KEY"], "liveavatar-secret");
+  assert.deepEqual(request.body, {
+    mode: "LITE",
+    is_sandbox: true,
+    avatar_id: LIVEAVATAR_SANDBOX_AVATAR_ID,
+    video_settings: { quality: "high", encoding: "H264" },
+    max_session_duration: 60,
+  });
+  assert.deepEqual(result, {
+    sessionToken: "short-lived-token",
+    sessionId: "session-1",
+    apiUrl: "https://api.liveavatar.test",
+    maxSessionDuration: 60,
+  });
+  assert.equal(JSON.stringify(provider.status()).includes("liveavatar-secret"), false);
+});
+
+test("LiveAvatar requires a custom avatar outside sandbox and keeps failures typed", async () => {
+  const missingAvatar = createLiveAvatarProvider({
+    env: { LIVEAVATAR_API_KEY: "secret", LIVEAVATAR_SANDBOX: "false" },
+  });
+  assert.equal(missingAvatar.available, false);
+  assert.equal(missingAvatar.status().status, "avatar_required");
+  await assert.rejects(
+    missingAvatar.createSessionToken(),
+    (error) => error instanceof LiveAvatarProviderError && error.code === "LIVEAVATAR_AVATAR_REQUIRED",
+  );
+
+  const rejected = createLiveAvatarProvider({
+    env: {
+      LIVEAVATAR_API_KEY: "secret",
+      LIVEAVATAR_SANDBOX: "false",
+      LIVEAVATAR_AVATAR_ID: "11111111-1111-4111-8111-111111111111",
+    },
+    fetchImpl: async () => new Response(JSON.stringify({ code: "invalid_api_key", message: "private detail" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  await assert.rejects(
+    rejected.createSessionToken(),
+    (error) => error instanceof LiveAvatarProviderError
+      && error.code === "LIVEAVATAR_HTTP_ERROR"
+      && error.status === 401
+      && error.providerCode === "invalid_api_key"
+      && !error.message.includes("private detail"),
   );
 });
 

@@ -9,6 +9,7 @@
 node_modules/
 dist/
 build/
+public/vendor/liveavatar-sdk.js
 .next/
 coverage/
 

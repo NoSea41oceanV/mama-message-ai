@@ -20,6 +20,7 @@ import { createDidVideoProvider } from "./lib/providers/did-video.mjs";
 import { createElevenLabsProvider, ElevenLabsError } from "./lib/providers/elevenlabs.mjs";
 import { createHeyGenVideoProvider } from "./lib/providers/heygen-video.mjs";
 import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
+import { createLiveAvatarProvider, LiveAvatarProviderError } from "./lib/providers/liveavatar.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
@@ -66,11 +67,26 @@ const videoRequestTimeoutMs = Number(
     || process.env.KLING_VIDEO_REQUEST_TIMEOUT_SECONDS
     || 30,
 ) * 1000;
+const liveAvatarProvider = createLiveAvatarProvider();
+const liveAvatarBatchPlaceholder = Object.freeze({
+  name: "liveavatar",
+  available: false,
+  async createTask() {
+    const error = new Error("LiveAvatar does not use batch avatar preparation");
+    error.code = "LIVEAVATAR_REALTIME_ONLY";
+    throw error;
+  },
+  async getTask() { return { status: "failed", videoUrl: null }; },
+  async deleteTask() { return false; },
+  async deleteAsset() { return false; },
+});
 const videoProvider = videoGenerationMode === "did"
   ? createDidVideoProvider({ timeoutMs: videoRequestTimeoutMs })
   : videoGenerationMode === "heygen"
     ? createHeyGenVideoProvider({ timeoutMs: videoRequestTimeoutMs })
-    : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
+    : videoGenerationMode === "liveavatar"
+      ? liveAvatarBatchPlaceholder
+      : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
 const guardianVideoService = createGuardianVideoService({
   samplingStore: guardianSampling,
   provider: videoProvider,
@@ -148,7 +164,7 @@ function storeGeneratedReplyVideo(media) {
 
 function securityHeaders() {
   return {
-    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://api.liveavatar.com wss://api.liveavatar.com wss://webrtc-signaling.heygen.io wss://*.livekit.cloud https://*.livekit.cloud; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     "permissions-policy": "camera=(), geolocation=(), payment=(), usb=()",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
@@ -184,6 +200,7 @@ function samplingApiView(status, videoGeneration = status.videoGeneration) {
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
     voiceCloningAvailable: status.voiceCloningAvailable === true,
     videoGeneration: videoGeneration ?? { status: "not_started" },
+    liveAvatar: liveAvatarProvider.status(),
   };
 }
 
@@ -682,6 +699,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
 
   const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
   const activeVideoService = runtime.videoService ?? guardianVideoService;
+  const activeLiveAvatarProvider = runtime.liveAvatarProvider ?? liveAvatarProvider;
   const activeReplyVideoProvider = runtime.replyVideoProvider
     ?? (videoProvider.name === "heygen" ? videoProvider : null);
   let clonedReplyAudio = null;
@@ -703,7 +721,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   let responseBundle;
   let videoFailureReason = null;
   try {
-    const generatedVideo = registeredSample
+    const generatedVideo = registeredSample && videoGenerationMode !== "liveavatar"
       ? activeVideoService.profileStatus?.(input.guardianProfileId)
         ?? guardianSampling.status(input.guardianProfileId).videoGeneration
       : null;
@@ -803,6 +821,10 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       : null,
     conversationTurn: Math.floor(conversationHistory.length / 2) + 1,
     speechRate: registeredSample?.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
+    liveAvatar: Object.freeze({
+      ...activeLiveAvatarProvider.status(),
+      eligible: Boolean(registeredSample && clonedReplyAudioUrl && activeLiveAvatarProvider.available),
+    }),
     responseBundle,
     bundle: responseBundle,
     completedAt: new Date().toISOString(),
@@ -833,6 +855,7 @@ async function apiHandler(req, res, url, runtime = {}) {
   purgeExpiredData();
   const videoService = runtime.videoService ?? guardianVideoService;
   const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
+  const activeLiveAvatarProvider = runtime.liveAvatarProvider ?? liveAvatarProvider;
   const generatedAudioMatch = url.pathname.match(/^\/api\/generated-audio\/([^/]+)$/);
   if (req.method === "GET" && generatedAudioMatch) {
     let accessToken;
@@ -859,6 +882,48 @@ async function apiHandler(req, res, url, runtime = {}) {
     const media = generatedReplyVideo.get(accessToken);
     if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
     else sendPrivateMedia(res, media);
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/liveavatar/session-token") {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 4 * 1024);
+      if (input.externalProcessingApproved !== true) {
+        sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
+        return true;
+      }
+      const sample = guardianSampling.resolve(profileId, input.consentId, input.avatarAssetId);
+      if (!sample) {
+        sendJson(res, 409, { error: "SAMPLING_NOT_REGISTERED" });
+        return true;
+      }
+      const session = await activeLiveAvatarProvider.createSessionToken();
+      sendJson(res, 201, {
+        sessionToken: session.sessionToken,
+        apiUrl: session.apiUrl,
+        maxSessionDuration: session.maxSessionDuration,
+        liveAvatar: activeLiveAvatarProvider.status(),
+      });
+    } catch (error) {
+      const statusCode = error instanceof LiveAvatarProviderError && error.status === 401 ? 401 : 503;
+      sendJson(res, statusCode, { error: error.code || "LIVEAVATAR_SESSION_FAILED" });
+    }
     return true;
   }
   const samplingAssetMatch = url.pathname.match(/^\/api\/sampling\/assets\/(photo|voice|video)\/([^/]+)$/);
@@ -1166,6 +1231,10 @@ async function apiHandler(req, res, url, runtime = {}) {
       videoGenerationProvider: videoProvider.name,
       videoGenerationConfigured: videoProvider.available,
       replyMotionConfigured: videoProvider.name === "heygen" && videoProvider.available,
+      liveAvatarConfigured: liveAvatarProvider.available,
+      liveAvatarMode: liveAvatarProvider.status().mode,
+      liveAvatarSandbox: liveAvatarProvider.sandbox,
+      liveAvatarCustomAvatarConfigured: liveAvatarProvider.customAvatarConfigured,
       voiceCloningMode,
       voiceCloningProvider: activeVoiceProvider.name,
       voiceCloningConfigured: activeVoiceProvider.available,
@@ -1399,6 +1468,7 @@ export function createAppServer(options = {}) {
       ?? (videoProvider.name === "heygen" ? videoProvider : null),
     videoDownloader: options.videoDownloader ?? downloadGeneratedVideo,
     voiceCloningProvider: options.voiceCloningProvider ?? voiceCloningProvider,
+    liveAvatarProvider: options.liveAvatarProvider ?? liveAvatarProvider,
   };
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");

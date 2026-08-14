@@ -10,6 +10,9 @@ process.env.MEDIA_PROVIDER = "demo";
 process.env.VIDEO_GENERATION_PROVIDER = "disabled";
 process.env.VOICE_CLONING_PROVIDER = "disabled";
 process.env.ELEVENLABS_API_KEY = "";
+process.env.LIVEAVATAR_API_KEY = "";
+process.env.LIVEAVATAR_AVATAR_ID = "";
+process.env.LIVEAVATAR_SANDBOX = "true";
 
 const {
   buildReply,
@@ -433,6 +436,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "childName",
     "faceApproved",
     "favoriteTopics",
+    "liveAvatar",
     "posterUrl",
     "speechRate",
     "subjectLabel",
@@ -915,6 +919,87 @@ test("video endpoints enforce profile isolation and serve only private capabilit
     assert.equal(media.headers.get("cache-control"), "private, no-store, max-age=0");
     assert.deepEqual(Buffer.from(await media.arrayBuffer()), videoBytes);
   } finally {
+    await new Promise((resolve) => isolatedServer.close(resolve));
+  }
+});
+
+test("LiveAvatar token endpoint keeps the API key server-side and requires profile consent", async () => {
+  const profileId = "99999999-9999-4999-8999-999999999999";
+  let tokenCalls = 0;
+  const liveAvatarProvider = {
+    available: true,
+    sandbox: true,
+    customAvatarConfigured: false,
+    status: () => ({
+      available: true,
+      configured: true,
+      mode: "LITE",
+      sandbox: true,
+      customAvatarConfigured: false,
+      avatarKind: "sandbox_public",
+      status: "sandbox",
+    }),
+    async createSessionToken() {
+      tokenCalls += 1;
+      return {
+        sessionToken: "short-lived-browser-token",
+        sessionId: "live-session-1",
+        apiUrl: "https://api.liveavatar.test",
+        maxSessionDuration: 60,
+      };
+    },
+  };
+  const isolatedServer = createAppServer({ liveAvatarProvider });
+  await new Promise((resolve) => isolatedServer.listen(0, "127.0.0.1", resolve));
+  const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.address().port}`;
+  const headers = { "content-type": "application/json", "x-guardian-profile-id": profileId };
+  try {
+    const missingConsent = await fetch(`${isolatedBaseUrl}/api/liveavatar/session-token`, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    assert.equal(missingConsent.status, 422);
+    assert.equal(tokenCalls, 0);
+
+    const sample = await (await fetch(`${isolatedBaseUrl}/api/sampling`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(samplingRegistration()),
+    })).json();
+    const tokenResponse = await fetch(`${isolatedBaseUrl}/api/liveavatar/session-token`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        consentId: sample.consentId,
+        avatarAssetId: sample.avatarAssetId,
+        externalProcessingApproved: true,
+      }),
+    });
+    const token = await tokenResponse.json();
+    assert.equal(tokenResponse.status, 201);
+    assert.equal(token.sessionToken, "short-lived-browser-token");
+    assert.equal(token.maxSessionDuration, 60);
+    assert.equal(token.liveAvatar.mode, "LITE");
+    assert.equal("apiKey" in token, false);
+    assert.equal(tokenCalls, 1);
+
+    const wrongProfile = await fetch(`${isolatedBaseUrl}/api/liveavatar/session-token`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-guardian-profile-id": "88888888-8888-4888-8888-888888888888",
+      },
+      body: JSON.stringify({
+        consentId: sample.consentId,
+        avatarAssetId: sample.avatarAssetId,
+        externalProcessingApproved: true,
+      }),
+    });
+    assert.equal(wrongProfile.status, 409);
+    assert.equal(tokenCalls, 1);
+  } finally {
+    await fetch(`${isolatedBaseUrl}/api/sampling`, { method: "DELETE", headers }).catch(() => {});
     await new Promise((resolve) => isolatedServer.close(resolve));
   }
 });

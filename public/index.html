@@ -88,7 +88,7 @@
         <div class="celebration" aria-hidden="true"><i>★</i><i>✦</i><i>●</i><i>★</i><i>✦</i><i>●</i></div>
         <h1 id="responseTitle">おへんじが とどいたよ</h1>
         <div class="media-stage" id="mediaStage">
-          <video id="responseVideo" playsinline preload="metadata" hidden></video>
+          <video id="responseVideo" autoplay playsinline preload="metadata" hidden></video>
           <audio id="responseAudio" preload="auto" hidden></audio>
           <div class="guardian-portrait" id="guardianPortrait" hidden>
             <img id="responsePoster" alt="保護者のメッセージ画像">
@@ -210,19 +210,19 @@
         <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">
           <div class="video-generation-heading">
             <div>
-              <p class="section-label">表情・身振り</p>
-              <h4 id="videoGenerationTitle">本人アバター</h4>
+              <p class="section-label">リアルタイム動画</p>
+              <h4 id="videoGenerationTitle">LiveAvatar</h4>
             </div>
             <span class="sample-badge" id="sampleVideoBadge">未作成</span>
           </div>
           <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
-          <p class="video-generation-copy">最初に登録写真から動画用素材を準備します。その後は返答ごとに、本人の口の動きと自然な表情をつけた動画を作ります。対応するアバターでは身振りも反映します。</p>
+          <p class="video-generation-copy">返答音声から、待ち時間の少ない口の動き・表情・自然な身振りをリアルタイム生成します。本人のLiveAvatarは公式管理画面での作成と同意確認が必要です。</p>
           <label class="check-row sample-consent">
             <input id="videoConsentCheck" type="checkbox">
-            <span>登録写真と返信音声をHeyGenへ送信し、本人アバターと返信動画を生成することに同意します</span>
+            <span id="videoConsentDescription">返信音声をLiveAvatarへ送信し、リアルタイム動画を生成することに同意します</span>
           </label>
-          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled>本人アバターを準備する</button>
-          <p class="sample-note">通常の動画生成には数分かかることがあります。失敗または時間切れの場合は、動かない写真とクローン音声へ自動で戻ります。</p>
+          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled hidden>接続を確認する</button>
+          <p class="sample-note">接続できない場合は、動かない写真とクローン音声へ自動で戻ります。写真を傾ける擬似動画は使いません。</p>
           <p id="videoGenerationStatus" class="inline-status" role="status"></p>
         </section>
         <p id="samplingStatus" class="inline-status" role="status"></p>
@@ -238,6 +238,7 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=27"></script>
+    <script src="/vendor/liveavatar-sdk.js?v=1"></script>
+    <script type="module" src="/app.js?v=28"></script>
   </body>
 </html>

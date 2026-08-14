@@ -35,6 +35,14 @@ const replayButton = document.querySelector("#replayButton");
 const soundButton = document.querySelector("#soundButton");
 const finishButton = document.querySelector("#finishButton");
 const talkAgainButton = document.querySelector("#talkAgainButton");
+const responseTalkLead = document.querySelector("#responseTalkLead");
+const responseTimer = document.querySelector("#responseTimer");
+const responseDemoAudioButton = document.querySelector("#responseDemoAudioButton");
+const responseTranscriptConfirm = document.querySelector("#responseTranscriptConfirm");
+const responseTranscriptInput = document.querySelector("#responseTranscriptInput");
+const responseRetryButton = document.querySelector("#responseRetryButton");
+const responseConfirmButton = document.querySelector("#responseConfirmButton");
+const responseRecordError = document.querySelector("#responseRecordError");
 const adultConfirmButton = document.querySelector("#adultConfirmButton");
 const adultHandoffMessage = document.querySelector("#adultHandoffMessage");
 const decisionList = document.querySelector("#decisionList");
@@ -44,6 +52,9 @@ const revokeConsent = document.querySelector("#revokeConsent");
 const restoreConsent = document.querySelector("#restoreConsent");
 const consentAdminStatus = document.querySelector("#consentAdminStatus");
 const guardianLabel = document.querySelector("#guardianLabel");
+const favoriteTopicsInput = document.querySelector("#favoriteTopicsInput");
+const saveFavoriteTopicsButton = document.querySelector("#saveFavoriteTopicsButton");
+const favoriteTopicsStatus = document.querySelector("#favoriteTopicsStatus");
 const sampleBadge = document.querySelector("#sampleBadge");
 const samplePhotoInput = document.querySelector("#samplePhotoInput");
 const samplePhotoPreview = document.querySelector("#samplePhotoPreview");
@@ -99,6 +110,7 @@ const state = {
   recordStartedAt: 0,
   recordTimer: null,
   autoStopTimer: null,
+  recordingContext: "record",
   transcriptId: null,
   requestId: null,
   response: null,
@@ -138,11 +150,19 @@ function showScreen(name) {
 }
 
 function setRecordState(active) {
-  recordButton.classList.toggle("is-recording", active);
-  waveform.classList.toggle("is-active", active);
-  recordLead.textContent = active ? "きいているよ" : "マイクをおすと、きいているよ";
-  recordActionLabel.textContent = active ? "おわったら、ここをおしてね" : "おしておはなし";
-  recordButton.setAttribute("aria-label", active ? "録音を停止する" : "録音を開始する");
+  const inline = state.recordingContext === "response";
+  recordButton.classList.toggle("is-recording", active && !inline);
+  waveform.classList.toggle("is-active", active && !inline);
+  talkAgainButton.classList.toggle("is-recording", active && inline);
+  if (inline) {
+    responseTalkLead.textContent = active ? "きいているよ" : "このまま つづけて おはなしできるよ";
+    talkAgainButton.textContent = active ? "■ おわったら おしてね" : "🎙 このまま おはなし";
+    talkAgainButton.setAttribute("aria-label", active ? "続けての録音を停止する" : "続けて録音を開始する");
+  } else {
+    recordLead.textContent = active ? "きいているよ" : "マイクをおすと、きいているよ";
+    recordActionLabel.textContent = active ? "おわったら、ここをおしてね" : "おしておはなし";
+    recordButton.setAttribute("aria-label", active ? "録音を停止する" : "録音を開始する");
+  }
 }
 
 function stopTracks() {
@@ -154,7 +174,9 @@ function stopTracks() {
 
 function updateTimer() {
   const seconds = Math.min(15, Math.floor((Date.now() - state.recordStartedAt) / 1000));
-  timer.textContent = `00:${String(seconds).padStart(2, "0")}`;
+  const value = `00:${String(seconds).padStart(2, "0")}`;
+  if (state.recordingContext === "response") responseTimer.textContent = value;
+  else timer.textContent = value;
 }
 
 function blobToBase64(blob) {
@@ -364,6 +386,10 @@ function renderSampling(sample) {
   sampleBadge.textContent = configured ? (sample.active ? "登録済み" : "停止中") : "未登録";
   sampleBadge.classList.toggle("is-ready", configured && sample.active);
   guardianLabel.value = sample?.subjectLabel || guardianLabel.value || "ママ";
+  favoriteTopicsInput.value = Array.isArray(sample?.favoriteTopics)
+    ? sample.favoriteTopics.join("、")
+    : "";
+  saveFavoriteTopicsButton.disabled = !configured;
   deleteSampleButton.disabled = !configured;
   if (sample?.posterUrl && !state.samplePhoto) {
     samplePhotoPreview.src = sample.posterUrl;
@@ -404,6 +430,36 @@ async function loadSampling() {
   return sample;
 }
 
+function favoriteTopicsFromInput() {
+  return favoriteTopicsInput.value
+    .split(/[、,\n]/)
+    .map((topic) => topic.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+async function saveFavoriteTopics() {
+  favoriteTopicsStatus.textContent = "";
+  saveFavoriteTopicsButton.disabled = true;
+  try {
+    const response = await profileFetch("/api/sampling/preferences", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ favoriteTopics: favoriteTopicsFromInput() }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "好きなものを保存できませんでした");
+    renderSampling(data);
+    favoriteTopicsStatus.textContent = data.favoriteTopics.length
+      ? `「${data.favoriteTopics.join("・")}」を会話の話題に使います。`
+      : "好きなものの登録を空にしました。";
+  } catch (error) {
+    favoriteTopicsStatus.textContent = error.message;
+  } finally {
+    saveFavoriteTopicsButton.disabled = !state.sample?.configured;
+  }
+}
+
 async function refreshConsent() {
   const response = await profileFetch("/api/consent");
   if (!response.ok) throw new Error("同意情報を確認できませんでした");
@@ -435,6 +491,7 @@ async function saveSampling() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         subjectLabel,
+        favoriteTopics: favoriteTopicsFromInput(),
         ...(state.samplePhoto ? {
           photoBase64: state.samplePhoto.base64,
           photoType: state.samplePhoto.type,
@@ -578,10 +635,17 @@ async function deleteSampling() {
   }
 }
 
-async function transcribe({ blob = null, useDemo = false } = {}) {
-  recordError.textContent = "";
-  recordButton.disabled = true;
-  demoAudioButton.disabled = true;
+async function transcribe({ blob = null, useDemo = false, stayOnResponse = false } = {}) {
+  const errorTarget = stayOnResponse ? responseRecordError : recordError;
+  errorTarget.textContent = "";
+  if (stayOnResponse) {
+    talkAgainButton.disabled = true;
+    responseDemoAudioButton.disabled = true;
+    responseTalkLead.textContent = "おはなしを聞き取っているよ";
+  } else {
+    recordButton.disabled = true;
+    demoAudioButton.disabled = true;
+  }
   try {
     const payload = {
       durationMs: state.recordStartedAt ? Date.now() - state.recordStartedAt : 0,
@@ -598,14 +662,28 @@ async function transcribe({ blob = null, useDemo = false } = {}) {
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || "音声を聞き取れませんでした");
     state.transcriptId = data.transcriptId;
-    transcriptInput.value = data.transcript;
-    showScreen("transcript");
+    if (stayOnResponse) {
+      responseTranscriptInput.value = data.transcript;
+      responseTranscriptConfirm.hidden = false;
+      responseTalkLead.textContent = "こう聞こえたよ。送る前に確認してね";
+      responseTranscriptInput.focus();
+    } else {
+      transcriptInput.value = data.transcript;
+      showScreen("transcript");
+    }
   } catch (error) {
-    recordError.textContent = `${error.message}。もう一度ためしてね。`;
+    errorTarget.textContent = `${error.message}。もう一度ためしてね。`;
+    if (stayOnResponse) responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
   } finally {
-    recordButton.disabled = false;
-    demoAudioButton.disabled = false;
-    timer.textContent = "00:00";
+    if (stayOnResponse) {
+      talkAgainButton.disabled = false;
+      responseDemoAudioButton.disabled = false;
+      responseTimer.textContent = "00:00";
+    } else {
+      recordButton.disabled = false;
+      demoAudioButton.disabled = false;
+      timer.textContent = "00:00";
+    }
   }
 }
 
@@ -616,8 +694,16 @@ async function stopRecording() {
   stopTracks();
 }
 
-async function startRecording() {
-  recordError.textContent = "";
+async function startRecording(context = "record") {
+  state.recordingContext = context;
+  const stayOnResponse = context === "response";
+  const errorTarget = stayOnResponse ? responseRecordError : recordError;
+  errorTarget.textContent = "";
+  if (stayOnResponse) {
+    stopSpeech();
+    responseTranscriptConfirm.hidden = true;
+    responseTranscriptInput.value = "";
+  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     state.mediaStream = stream;
@@ -628,7 +714,7 @@ async function startRecording() {
     });
     state.mediaRecorder.addEventListener("stop", async () => {
       const blob = new Blob(state.audioChunks, { type: state.mediaRecorder.mimeType || "audio/webm" });
-      await transcribe({ blob });
+      await transcribe({ blob, stayOnResponse });
     }, { once: true });
     state.mediaRecorder.start(250);
     state.recordStartedAt = Date.now();
@@ -637,15 +723,42 @@ async function startRecording() {
     state.autoStopTimer = setTimeout(stopRecording, 15000);
     setRecordState(true);
   } catch {
-    recordError.textContent = "マイクを使えませんでした。デモ音声ならそのまま進めます。";
+    errorTarget.textContent = "マイクを使えませんでした。デモ音声ならそのまま進めます。";
   }
+}
+
+function prepareInlineTurn() {
+  if (state.requestId) {
+    profileFetch(`/api/responses/${encodeURIComponent(state.requestId)}`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => {});
+  }
+  state.transcriptId = null;
+  state.requestId = null;
+  responseTranscriptConfirm.hidden = true;
+  responseTranscriptInput.value = "";
+  responseRecordError.textContent = "";
+}
+
+function resetResponseComposer() {
+  state.recordingContext = "response";
+  setRecordState(false);
+  responseTranscriptConfirm.hidden = true;
+  responseTranscriptInput.value = "";
+  responseTimer.textContent = "00:00";
+  responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+  responseRecordError.textContent = "";
+  talkAgainButton.disabled = false;
+  responseDemoAudioButton.disabled = false;
+  responseConfirmButton.disabled = false;
 }
 
 async function pollResponse(requestId) {
   state.pollAbort?.abort();
   state.pollAbort = new AbortController();
   const started = Date.now();
-  while (Date.now() - started < 30000) {
+  while (Date.now() - started < 90000) {
     const response = await profileFetch(`/api/responses/${encodeURIComponent(requestId)}`, { signal: state.pollAbort.signal });
     const data = await response.json();
     if (data.status === "READY") {
@@ -654,6 +767,7 @@ async function pollResponse(requestId) {
       renderDecision(data);
       await prepareResponse(data);
       showScreen("response");
+      resetResponseComposer();
       await playResponse();
       return;
     }
@@ -670,13 +784,23 @@ async function pollResponse(requestId) {
   throw new Error("RESPONSE_TIMEOUT");
 }
 
-async function createResponse() {
-  const confirmedTranscript = transcriptInput.value.trim();
+async function createResponse({ inline = false } = {}) {
+  const activeTranscriptInput = inline ? responseTranscriptInput : transcriptInput;
+  const confirmedTranscript = activeTranscriptInput.value.trim();
   if (!confirmedTranscript) {
-    transcriptInput.focus();
+    activeTranscriptInput.focus();
     return;
   }
-  showScreen("waiting");
+  if (inline) {
+    stopSpeech();
+    responseConfirmButton.disabled = true;
+    talkAgainButton.disabled = true;
+    responseDemoAudioButton.disabled = true;
+    responseTalkLead.textContent = "ママがおへんじを考えているよ";
+    responseRecordError.textContent = "";
+  } else {
+    showScreen("waiting");
+  }
   try {
     const response = await profileFetch("/api/responses", {
       method: "POST",
@@ -699,6 +823,14 @@ async function createResponse() {
     await pollResponse(data.requestId);
   } catch (error) {
     if (error.name === "AbortError") return;
+    if (inline) {
+      responseTalkLead.textContent = "おへんじを準備できなかったよ";
+      responseRecordError.textContent = "もう一度お話してみてね。";
+      talkAgainButton.disabled = false;
+      responseDemoAudioButton.disabled = false;
+      responseConfirmButton.disabled = false;
+      return;
+    }
     state.response = {
       status: "ADULT_HANDOFF",
       routerDecision: { safetyLevel: "uncertain", supportMode: "adult_handoff", emotion: ["unknown"] },
@@ -924,6 +1056,13 @@ function resetFlow() {
   stopSpeech();
   stopTracks();
   state.pollAbort?.abort();
+  const endedConversationId = state.conversationId;
+  if (endedConversationId) {
+    profileFetch(`/api/conversations/${encodeURIComponent(endedConversationId)}`, {
+      method: "DELETE",
+      keepalive: true,
+    }).catch(() => {});
+  }
   state.sessionId = crypto.randomUUID();
   state.conversationId = crypto.randomUUID();
   state.transcriptId = null;
@@ -940,7 +1079,13 @@ function resetFlow() {
   responseAudio.removeAttribute("src");
   responseAudio.load();
   timer.textContent = "00:00";
+  state.recordingContext = "record";
   setRecordState(false);
+  responseTranscriptConfirm.hidden = true;
+  responseTranscriptInput.value = "";
+  responseTimer.textContent = "00:00";
+  responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+  responseRecordError.textContent = "";
   showScreen("setup");
 }
 
@@ -1024,10 +1169,11 @@ sampleRecordButton.addEventListener("click", () => {
   else startSampleRecording();
 });
 saveSampleButton.addEventListener("click", saveSampling);
+saveFavoriteTopicsButton.addEventListener("click", saveFavoriteTopics);
 deleteSampleButton.addEventListener("click", deleteSampling);
 generateVideoButton.addEventListener("click", generateSamplingVideo);
 startSetup.addEventListener("click", () => showScreen("record"));
-recordButton.addEventListener("click", () => state.mediaRecorder?.state === "recording" ? stopRecording() : startRecording());
+recordButton.addEventListener("click", () => state.mediaRecorder?.state === "recording" ? stopRecording() : startRecording("record"));
 demoAudioButton.addEventListener("click", () => transcribe({ useDemo: true }));
 retryButton.addEventListener("click", () => showScreen("record"));
 confirmButton.addEventListener("click", createResponse);
@@ -1035,7 +1181,26 @@ cancelButton.addEventListener("click", resetFlow);
 replayButton.addEventListener("click", playResponse);
 soundButton.addEventListener("click", stopSpeech);
 finishButton.addEventListener("click", resetFlow);
-talkAgainButton.addEventListener("click", continueTalking);
+talkAgainButton.addEventListener("click", () => {
+  if (state.mediaRecorder?.state === "recording" && state.recordingContext === "response") {
+    stopRecording();
+    return;
+  }
+  prepareInlineTurn();
+  startRecording("response");
+});
+responseDemoAudioButton.addEventListener("click", () => {
+  prepareInlineTurn();
+  state.recordingContext = "response";
+  transcribe({ useDemo: true, stayOnResponse: true });
+});
+responseRetryButton.addEventListener("click", () => {
+  responseTranscriptConfirm.hidden = true;
+  responseTranscriptInput.value = "";
+  responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+  talkAgainButton.focus();
+});
+responseConfirmButton.addEventListener("click", () => createResponse({ inline: true }));
 adultConfirmButton.addEventListener("click", async () => { await Promise.allSettled([loadLogs(), loadSampling()]); adultDialog.showModal(); });
 adultButton.addEventListener("click", async () => { await Promise.allSettled([loadLogs(), loadSampling()]); adultDialog.showModal(); });
 closeDialog.addEventListener("click", () => { stopSampleRecording(); adultDialog.close(); });

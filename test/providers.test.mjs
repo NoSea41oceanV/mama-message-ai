@@ -465,6 +465,7 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   });
   const result = await provider.classifyAndReply({
     transcript: "ブロックでおうちを作れたよ",
+    favoriteTopics: ["恐竜", "電車"],
     history: [
       { role: "user", content: "きのうはタワーを作ったよ" },
       { role: "assistant", content: "高くできたんだね。" },
@@ -484,6 +485,7 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.match(request.body.messages[0].content, /分離不安だけを理由に adult_handoff にしない/);
   assert.match(request.body.messages[0].content, /「すぐ迎えに行く」「もうすぐ着く」/);
   assert.deepEqual(request.body.messages.slice(1), [
+    { role: "system", content: "登録された好きなもの: 恐竜、電車。必要なときだけ、この中から一つを自然な安心材料や遊びの話題として使ってください。" },
     { role: "user", content: "きのうはタワーを作ったよ" },
     { role: "assistant", content: "高くできたんだね。" },
     { role: "user", content: "ブロックでおうちを作れたよ" },
@@ -491,7 +493,68 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.equal(result.replyText, validOrcaResponse.replyText);
   assert.equal(result.metadata.resolvedModel, "provider/header-model");
   assert.equal(result.metadata.usage.total_tokens, 50);
+  assert.equal(result.metadata.favoriteTopicsCount, 2);
   assert.equal(result.metadata.headers["x-orca-request-id"], "orca-request-1");
+});
+
+test("OrcaRouter uses the Responses API for GPT-5.6 models", async () => {
+  let request;
+  const provider = createOrcaRouterProvider({
+    env: {
+      ROUTER_PROVIDER: "orcarouter",
+      ORCAROUTER_API_KEY: "secret",
+      ORCAROUTER_MODEL: "openai/gpt-5.6-luna",
+    },
+    fetchImpl: async (url, init) => {
+      request = { url, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        id: "resp_luna_1",
+        model: "openai/gpt-5.6-luna",
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(validOrcaResponse) }] }],
+        usage: { input_tokens: 24, output_tokens: 32 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const result = await provider.classifyAndReply("ママに会いたい");
+  assert.equal(request.url, "https://api.orcarouter.ai/v1/responses");
+  assert.equal(request.body.model, "openai/gpt-5.6-luna");
+  assert.equal(request.body.text.format.type, "json_schema");
+  assert.equal(request.body.text.format.strict, true);
+  assert.equal(request.body.reasoning.effort, "low");
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.resolvedModel, "openai/gpt-5.6-luna");
+});
+
+test("OrcaRouter falls back from unavailable Luna to GPT-5.6 Terra", async () => {
+  const requestedModels = [];
+  const provider = createOrcaRouterProvider({
+    env: {
+      ROUTER_PROVIDER: "orcarouter",
+      ORCAROUTER_API_KEY: "secret",
+      ORCAROUTER_MODEL: "openai/gpt-5.6-luna",
+      ORCAROUTER_FALLBACK_MODEL: "openai/gpt-5.6-terra",
+    },
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requestedModels.push(body.model);
+      if (body.model.endsWith("luna")) {
+        return new Response(JSON.stringify({ error: { message: "temporarily unavailable" } }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        model: "openai/gpt-5.6-terra",
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(validOrcaResponse) }] }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const result = await provider.classifyAndReply("ママに会いたい");
+  assert.deepEqual(requestedModels, ["openai/gpt-5.6-luna", "openai/gpt-5.6-terra"]);
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.fallback, true);
+  assert.equal(result.metadata.primaryModel, "openai/gpt-5.6-luna");
+  assert.equal(result.metadata.resolvedModel, "openai/gpt-5.6-terra");
 });
 
 test("OrcaRouter fails closed on invalid JSON", async () => {

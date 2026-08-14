@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import {
   GuardianSamplingError,
   createGuardianSamplingStore,
+  normalizeFavoriteTopics,
 } from "./lib/guardian-sampling.mjs";
 import {
   GUARDIAN_PROFILE_ID_PATTERN,
@@ -44,11 +45,11 @@ const technicalLogs = [];
 const generatedReplyAudio = new Map();
 const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 24);
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
-const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 30);
+const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 120);
 const conversationTtlMs = (Number.isFinite(configuredConversationTtlMinutes)
   ? Math.max(1, configuredConversationTtlMinutes)
-  : 30) * 60 * 1000;
-const MAX_CONVERSATION_TURNS = 6;
+  : 120) * 60 * 1000;
+const MAX_CONVERSATION_TURNS = 12;
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
 const guardianSampling = createPersistentGuardianSamplingStore({
@@ -154,6 +155,7 @@ function samplingApiView(status) {
     configured: status.configured === true,
     active: status.active === true,
     subjectLabel: status.subjectLabel ?? null,
+    favoriteTopics: [...(status.favoriteTopics ?? [])],
     faceApproved: status.faceApproved === true,
     voiceApproved: status.voiceApproved === true,
     posterUrl: status.posterUrl ?? null,
@@ -264,29 +266,36 @@ function presentCaregiverLabel(value) {
   return "いま一緒にいる人";
 }
 
-export function buildSeparationReply(transcript = "") {
+export function buildSeparationReply(transcript = "", favoriteTopics = []) {
   const value = shortConversationTopic(transcript, 80);
   if (!value) return null;
   const caregiver = presentCaregiverLabel(value);
+  const favorite = normalizeFavoriteTopics(favoriteTopics)[0] ?? null;
   if (/(?:お迎え|ママ|お母さん).*(?:まだ|いつ|来る)|(?:まだ|いつ).*(?:お迎え|ママ|お母さん)/.test(value)) {
-    return `お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、待つあいだ何をするか一緒に決めようね。`;
+    return favorite
+      ? `お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、${favorite}のお話をしながら待とうね。`
+      : `お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、待つあいだ何をするか一緒に決めようね。`;
   }
   if (/(?:ママ|お母さん).*(?:どこ|何してる)/.test(value)) {
     return `ママのことが気になったんだね。${caregiver}に、お迎えのことを聞いてみようね。`;
   }
   const separationDistress = /(?:ママ|お母さん).*(?:会いたい|いな(?:い|く)|来て|さみしい|寂しい)|(?:会いたい|さみしい|寂しい).*(?:ママ|お母さん)/;
   if (separationDistress.test(value) && /(泣|涙)/.test(value)) {
-    return `泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、ゆっくり三つ数えてみようね。`;
+    return favorite
+      ? `泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
+      : `泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、ゆっくり三つ数えてみようね。`;
   }
   if (separationDistress.test(value)) {
-    return `ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、いっしょに待とうね。`;
+    return favorite
+      ? `ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
+      : `ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、いっしょに待とうね。`;
   }
   return null;
 }
 
-export function buildReply(decision, transcript = "", history = []) {
+export function buildReply(decision, transcript = "", history = [], favoriteTopics = []) {
   const currentTopic = shortConversationTopic(transcript);
-  const separationReply = buildSeparationReply(transcript);
+  const separationReply = buildSeparationReply(transcript, favoriteTopics);
   if (separationReply) return separationReply;
   if (/(元気|げんき)[？?。！!]*$/.test(currentTopic)) {
     return "うん、元気だよ！今日は何してたの？";
@@ -318,21 +327,21 @@ export function buildReply(decision, transcript = "", history = []) {
   return replies[decision.supportMode] ?? replies.listen;
 }
 
-export function refineGuardianReply(decision, transcript = "", history = []) {
+export function refineGuardianReply(decision, transcript = "", history = [], favoriteTopics = []) {
   if (!decision || decision.safetyLevel !== "normal") return decision;
   const currentTopic = shortConversationTopic(transcript);
-  const fixedDailyReply = buildSeparationReply(transcript) ?? ((
+  const fixedDailyReply = buildSeparationReply(transcript, favoriteTopics) ?? ((
     /(元気|げんき)[？?。！!]*$/.test(currentTopic)
     || /(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)
     || /(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)
-  ) ? buildReply(decision, transcript, history) : null);
+  ) ? buildReply(decision, transcript, history, favoriteTopics) : null);
   const soundsLikeCounselingBot = /(きみはどう|今日はどんな(?:気持ち|気分)|今どんな(?:気持ち|気分)|お話ししてくれてありがとう)/.test(
     String(decision.replyText ?? ""),
   );
   if (!fixedDailyReply && !soundsLikeCounselingBot) return decision;
   return Object.freeze({
     ...decision,
-    replyText: fixedDailyReply ?? buildReply(decision, transcript, history),
+    replyText: fixedDailyReply ?? buildReply(decision, transcript, history, favoriteTopics),
   });
 }
 
@@ -546,6 +555,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   const routed = await routerProvider.classifyAndReply({
     transcript: input.confirmedTranscript,
     history: conversationHistory,
+    favoriteTopics: registeredSample?.favoriteTopics ?? [],
   });
   const routedDecision = routed.decision;
   if (!routed.ok || !routedDecision || routedDecision.safetyLevel !== "normal") {
@@ -577,6 +587,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     routedDecision,
     input.confirmedTranscript,
     conversationHistory,
+    registeredSample?.favoriteTopics ?? [],
   );
 
   if (!replyIsAllowed(decision.replyText)) {
@@ -675,6 +686,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     replyText: responseBundle.parentLike
       ? decision.replyText
       : null,
+    conversationTurn: Math.floor(conversationHistory.length / 2) + 1,
     responseBundle,
     bundle: responseBundle,
     completedAt: new Date().toISOString(),
@@ -871,6 +883,30 @@ async function apiHandler(req, res, url, runtime = {}) {
     }
     return true;
   }
+  if (req.method === "POST" && url.pathname === "/api/sampling/preferences") {
+    const profileId = readGuardianProfileId(req);
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 16 * 1024);
+      const updated = guardianSampling.updatePreferences(profileId, input);
+      sendJson(res, 200, samplingApiView(updated));
+    } catch (error) {
+      sendJson(res, error instanceof GuardianSamplingError ? error.statusCode : 400, {
+        error: error.code || "PREFERENCES_REQUEST_INVALID",
+        message: error instanceof GuardianSamplingError
+          ? "先に保護者の写真と声を登録してください。"
+          : "好きなものを保存できませんでした。",
+      });
+    }
+    return true;
+  }
   if (url.pathname === "/api/sampling") {
     const profileId = readGuardianProfileId(req);
     if (!profileId) {
@@ -974,6 +1010,7 @@ async function apiHandler(req, res, url, runtime = {}) {
       status: "ok",
       routerMode,
       routerConfigured: routerProvider.available,
+      routerModel: process.env.ORCAROUTER_MODEL || "orcarouter/auto",
       sttMode,
       sttConfigured: Boolean(process.env.STT_API_KEY || process.env.OPENAI_API_KEY),
       mediaMode: String(process.env.MEDIA_PROVIDER || "demo").toLowerCase(),
@@ -1151,6 +1188,28 @@ async function apiHandler(req, res, url, runtime = {}) {
       if (storedRequestId === requestId) idempotency.delete(key);
     }
     sendJson(res, existed ? 200 : 404, existed ? { deleted: true } : { error: "NOT_FOUND" });
+    return true;
+  }
+
+  const conversationMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)$/);
+  if (req.method === "DELETE" && conversationMatch) {
+    const guardianProfileId = readGuardianProfileId(req);
+    if (guardianProfileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    let conversationId;
+    try {
+      conversationId = decodeURIComponent(conversationMatch[1]).trim();
+    } catch {
+      conversationId = "";
+    }
+    if (!conversationId || conversationId.length > 128) {
+      sendJson(res, 400, { error: "CONVERSATION_ID_INVALID" });
+      return true;
+    }
+    const deleted = conversations.delete(conversationStorageKey(guardianProfileId, conversationId));
+    sendJson(res, 200, { deleted });
     return true;
   }
 

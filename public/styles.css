@@ -431,6 +431,18 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .voice-bars i { width: 4px; height: 8px; border-radius: 3px; background: var(--coral); }
 .media-stage.is-speaking .voice-bars i { animation: wave .45s ease-in-out infinite alternate; }
 .playback-controls { display: flex; justify-content: center; gap: 18px; margin: 0 0 17px; }
+.response-conversation { width: min(100%, 340px); margin: 0 auto 6px; padding: 14px; border: 2px solid #9bc7da; border-radius: 16px; background: rgb(255 255 255 / 94%); }
+.response-conversation > p:first-child { margin: 0 0 10px; color: var(--ink); font-size: 14px; font-weight: 900; text-align: center; }
+.response-talk-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+.response-talk-button { min-height: 50px; padding: 10px 14px; font-size: 15px; }
+.response-talk-button.is-recording { border-color: #b52e2e; background: #e64e4e; box-shadow: 0 6px 0 #b52e2e; animation: mic-pulse .8s ease-in-out infinite; }
+.response-timer { min-width: 46px; color: var(--ink-strong); font-size: 15px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.response-demo-button { display: block; margin: 4px auto 0; padding: 7px; font-size: 12px; }
+.response-transcript { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.response-transcript textarea { padding: 10px 12px; font-size: 16px; line-height: 1.5; }
+.response-transcript .action-row { margin-top: 10px; }
+.response-transcript .primary-button, .response-transcript .secondary-button { min-height: 43px; padding: 8px 10px; font-size: 13px; box-shadow: none; }
+.response-conversation .inline-status { margin: 7px 0 0; text-align: center; }
 
 .safety-screen { justify-content: center; background: var(--mint-soft); }
 .safety-screen::before { top: 30px; left: -75px; }
@@ -474,6 +486,9 @@ dialog .secondary-button { box-shadow: none; }
 .sample-badge.is-progress { border-color: #338eb9; background: var(--sky-soft); color: #155f83; }
 .sample-badge.is-failed { border-color: #d75050; background: #fff0f0; color: #a52222; }
 .text-input { min-height: 44px; padding: 9px 11px; border-radius: 8px; background: var(--white); color: var(--ink-strong); }
+.favorite-topics-panel { margin: 14px 0 4px; padding: 13px; border: 1px solid #b8d5e1; border-radius: 8px; background: #f5fbfd; }
+.favorite-topics-panel .sample-note { margin: 7px 0; }
+.favorite-topics-panel .secondary-button { width: 100%; }
 .sample-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
 .sample-picker { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0; min-height: 196px; padding: 13px 10px; overflow: hidden; border: 2px dashed #9bc7da; border-radius: 8px; background: #f5fbfd; color: var(--ink); text-align: center; cursor: pointer; }
 .sample-picker strong { margin: 5px 0 3px; font-size: 14px; }

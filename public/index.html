@@ -104,7 +104,23 @@
           <button class="icon-button large" id="replayButton" type="button" aria-label="もう一度再生する" title="もう一度">↻</button>
           <button class="icon-button large" id="soundButton" type="button" aria-label="音声を停止する" title="音声">♪</button>
         </div>
-        <button class="primary-button" id="talkAgainButton" type="button">つづけて おはなし</button>
+        <section class="response-conversation" aria-labelledby="responseTalkLead">
+          <p id="responseTalkLead">このまま つづけて おはなしできるよ</p>
+          <div class="response-talk-row">
+            <button class="primary-button response-talk-button" id="talkAgainButton" type="button" aria-label="続けて録音を開始する">🎙 このまま おはなし</button>
+            <span class="response-timer" id="responseTimer">00:00</span>
+          </div>
+          <button class="text-button response-demo-button" id="responseDemoAudioButton" type="button">デモ音声で続ける</button>
+          <div class="response-transcript" id="responseTranscriptConfirm" hidden>
+            <label class="field-label" for="responseTranscriptInput">こう聞こえたよ</label>
+            <textarea id="responseTranscriptInput" rows="2"></textarea>
+            <div class="action-row">
+              <button class="secondary-button" id="responseRetryButton" type="button">もういちど</button>
+              <button class="primary-button" id="responseConfirmButton" type="button">これで送る</button>
+            </div>
+          </div>
+          <p class="inline-status" id="responseRecordError" role="status"></p>
+        </section>
         <button class="text-button" id="finishButton" type="button">おわる</button>
       </section>
 
@@ -141,6 +157,13 @@
         </div>
         <label class="field-label" for="guardianLabel">子どもからの呼び方</label>
         <input id="guardianLabel" class="text-input" type="text" maxlength="20" value="ママ" autocomplete="off">
+        <div class="favorite-topics-panel">
+          <label class="field-label" for="favoriteTopicsInput">その子の好きなもの</label>
+          <input id="favoriteTopicsInput" class="text-input" type="text" maxlength="180" placeholder="例：恐竜、電車、プリキュア" autocomplete="off">
+          <p class="sample-note">最大5つ。「、」で区切ると、待っている間の安心できる話題に使います。</p>
+          <button class="secondary-button compact" id="saveFavoriteTopicsButton" type="button" disabled>好きなものを保存</button>
+          <p id="favoriteTopicsStatus" class="inline-status" role="status"></p>
+        </div>
         <div class="sample-grid">
           <label class="sample-picker" for="samplePhotoInput">
             <span class="sample-icon" aria-hidden="true">写</span>
@@ -208,6 +231,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=23"></script>
+    <script type="module" src="/app.js?v=24"></script>
   </body>
 </html>

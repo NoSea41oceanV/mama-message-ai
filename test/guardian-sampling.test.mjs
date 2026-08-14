@@ -60,6 +60,22 @@ test("trusted ElevenLabs clone metadata is available without exposing the voice 
   assert.deepEqual(resolved.voiceClone, { provider: "elevenlabs", voiceId: "private-voice-id" });
 });
 
+test("favorite topics are normalized and update without replacing guardian media", () => {
+  const store = createGuardianSamplingStore();
+  const first = store.register(validRegistration({
+    favoriteTopics: ["恐竜", " 電車 ", "恐竜", "", "プリキュア"],
+  }));
+  const before = store.resolve(first.consentId, first.avatarAssetId);
+  assert.deepEqual(first.favoriteTopics, ["恐竜", "電車", "プリキュア"]);
+  const updated = store.updatePreferences({ favoriteTopics: "ブロック、動物\n絵本" });
+  const after = store.resolve(updated.consentId, updated.avatarAssetId);
+  assert.deepEqual(updated.favoriteTopics, ["ブロック", "動物", "絵本"]);
+  assert.deepEqual(after.favoriteTopics, ["ブロック", "動物", "絵本"]);
+  assert.equal(after.photo, before.photo);
+  assert.equal(after.voice, before.voice);
+  assert.equal(updated.consentId, first.consentId);
+});
+
 test("voice-only replacement preserves the guardian photo and consent identifiers", () => {
   const store = createGuardianSamplingStore();
   const first = store.register(validRegistration(), {

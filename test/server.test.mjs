@@ -170,6 +170,21 @@ test("replaces model promises with the separation-support reply", () => {
   assert.match(refined.replyText, /いま一緒にいる人に時間を聞いて/);
 });
 
+test("uses a registered favorite as a gentle waiting topic", () => {
+  const decision = {
+    safetyLevel: "normal",
+    supportMode: "comfort",
+    emotion: ["sadness"],
+    reasonCodes: ["SEPARATION_DISTRESS"],
+    replyText: "寂しいよね。",
+    voiceTone: "warm",
+    expression: "gentle",
+  };
+  const refined = refineGuardianReply(decision, "ママに会いたい", [], ["恐竜", "電車"]);
+  assert.match(refined.replyText, /恐竜のお話/);
+  assert.doesNotMatch(refined.replyText, /電車/);
+});
+
 test("still hands concrete danger to an adult", () => {
   assert.equal(classifyTranscript("知らない人がついてくる、助けて").safetyLevel, "adult_required");
   assert.equal(classifyTranscript("怖い人に追いかけられてる").safetyLevel, "adult_required");
@@ -366,6 +381,24 @@ test("deletes session response data when the flow ends", async () => {
   assert.equal((await fetch(`${baseUrl}/api/responses/${pending.requestId}`)).status, 404);
 });
 
+test("conversation memory is isolated by session and can be cleared at the end", async () => {
+  const conversationId = `conversation-${crypto.randomUUID()}`;
+  await createAndWait({ conversationId, confirmedTranscript: "恐竜が好きだよ" });
+  const continued = await createAndWait({ conversationId, confirmedTranscript: "ティラノサウルスだよ" });
+  assert.equal(continued.result.conversationTurn, 2);
+  assert.match(continued.result.replyText, /さっきの/);
+
+  const deleted = await fetch(`${baseUrl}/api/conversations/${encodeURIComponent(conversationId)}`, {
+    method: "DELETE",
+  });
+  assert.equal(deleted.status, 200);
+  assert.equal((await deleted.json()).deleted, true);
+
+  const restarted = await createAndWait({ conversationId, confirmedTranscript: "ティラノサウルスだよ" });
+  assert.equal(restarted.result.conversationTurn, 1);
+  assert.doesNotMatch(restarted.result.replyText, /さっきの/);
+});
+
 test("media failure degrades to neutral LEVEL 4 output", async () => {
   const { result } = await createAndWait({ demoFault: "media-unavailable" });
   assert.equal(result.status, "READY");
@@ -398,6 +431,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "configured",
     "consentId",
     "faceApproved",
+    "favoriteTopics",
     "posterUrl",
     "subjectLabel",
     "videoGeneration",
@@ -410,6 +444,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(created.active, true);
   assert.equal(created.faceApproved, true);
   assert.equal(created.voiceApproved, true);
+  assert.deepEqual(created.favoriteTopics, []);
   assert.deepEqual(created.videoGeneration, { status: "not_started" });
   assert.doesNotMatch(JSON.stringify(created), /server-test-(photo|voice)/);
 
@@ -419,6 +454,15 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(consent.source, "custom-sampling");
   assert.equal(consent.consentId, created.consentId);
   assert.equal(consent.avatarAssetId, created.avatarAssetId);
+
+  const preferencesResponse = await fetch(`${baseUrl}/api/sampling/preferences`, {
+    method: "POST",
+    headers: samplingProfileHeaders,
+    body: JSON.stringify({ favoriteTopics: ["恐竜", "電車"] }),
+  });
+  assert.equal(preferencesResponse.status, 200);
+  const preferences = await preferencesResponse.json();
+  assert.deepEqual(preferences.favoriteTopics, ["恐竜", "電車"]);
 
   const photoResponse = await fetch(`${baseUrl}${created.posterUrl}`);
   assert.equal(photoResponse.status, 200);
@@ -432,6 +476,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.deepEqual(Buffer.from(await voiceResponse.arrayBuffer()), samplingVoice);
 
   const { result } = await createAndWait({
+    confirmedTranscript: "ママに会いたい",
     consentId: created.consentId,
     avatarAssetId: created.avatarAssetId,
   }, samplingProfileId);
@@ -440,7 +485,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(result.responseBundle.posterUrl, created.posterUrl);
   assert.equal(result.responseBundle.audioUrl, null);
   assert.equal(result.responseBundle.speechSynthesis, true);
-  assert.match(result.responseBundle.subtitle, /きょうブロックでおうちを作ったよ/);
+  assert.match(result.responseBundle.subtitle, /恐竜のお話/);
   assert.equal(result.responseBundle.replyText, result.replyText);
   assert.equal(result.responseBundle.guardianSampling.photoUsed, true);
   assert.equal(result.responseBundle.guardianSampling.voiceSampleRegistered, true);

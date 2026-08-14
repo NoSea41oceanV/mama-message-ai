@@ -5,8 +5,10 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
+  GUARDIAN_SAMPLING_LIMITS,
   GuardianSamplingError,
   createGuardianSamplingStore,
+  normalizeChildName,
   normalizeFavoriteTopics,
 } from "./lib/guardian-sampling.mjs";
 import {
@@ -20,6 +22,7 @@ import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
+import { isChildHiragana, toChildHiragana } from "./lib/japanese-text.mjs";
 
 async function loadLocalEnvironment() {
   try {
@@ -156,6 +159,8 @@ function samplingApiView(status) {
     active: status.active === true,
     subjectLabel: status.subjectLabel ?? null,
     favoriteTopics: [...(status.favoriteTopics ?? [])],
+    childName: status.childName ?? "",
+    speechRate: status.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
     faceApproved: status.faceApproved === true,
     voiceApproved: status.voiceApproved === true,
     posterUrl: status.posterUrl ?? null,
@@ -266,36 +271,42 @@ function presentCaregiverLabel(value) {
   return "いま一緒にいる人";
 }
 
-export function buildSeparationReply(transcript = "", favoriteTopics = []) {
+function childNamePrefix(childName) {
+  const normalized = normalizeChildName(childName);
+  return normalized ? `${normalized}、` : "";
+}
+
+export function buildSeparationReply(transcript = "", favoriteTopics = [], childName = "") {
   const value = shortConversationTopic(transcript, 80);
   if (!value) return null;
   const caregiver = presentCaregiverLabel(value);
   const favorite = normalizeFavoriteTopics(favoriteTopics)[0] ?? null;
+  const childCall = childNamePrefix(childName);
   if (/(?:お迎え|ママ|お母さん).*(?:まだ|いつ|来る)|(?:まだ|いつ).*(?:お迎え|ママ|お母さん)/.test(value)) {
     return favorite
-      ? `お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、${favorite}のお話をしながら待とうね。`
-      : `お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、待つあいだ何をするか一緒に決めようね。`;
+      ? `${childCall}お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、${favorite}のお話をしながら待とうね。`
+      : `${childCall}お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、待つあいだ何をするか一緒に決めようね。`;
   }
   if (/(?:ママ|お母さん).*(?:どこ|何してる)/.test(value)) {
-    return `ママのことが気になったんだね。${caregiver}に、お迎えのことを聞いてみようね。`;
+    return `${childCall}ママのことが気になったんだね。${caregiver}に、お迎えのことを聞いてみようね。`;
   }
   const separationDistress = /(?:ママ|お母さん).*(?:会いたい|いな(?:い|く)|来て|さみしい|寂しい)|(?:会いたい|さみしい|寂しい).*(?:ママ|お母さん)/;
   if (separationDistress.test(value) && /(泣|涙)/.test(value)) {
     return favorite
-      ? `泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
-      : `泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、ゆっくり三つ数えてみようね。`;
+      ? `${childCall}泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
+      : `${childCall}泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、ゆっくり三つ数えてみようね。`;
   }
   if (separationDistress.test(value)) {
     return favorite
-      ? `ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
-      : `ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、いっしょに待とうね。`;
+      ? `${childCall}ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
+      : `${childCall}ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、いっしょに待とうね。`;
   }
   return null;
 }
 
-export function buildReply(decision, transcript = "", history = [], favoriteTopics = []) {
+export function buildReply(decision, transcript = "", history = [], favoriteTopics = [], childName = "") {
   const currentTopic = shortConversationTopic(transcript);
-  const separationReply = buildSeparationReply(transcript, favoriteTopics);
+  const separationReply = buildSeparationReply(transcript, favoriteTopics, childName);
   if (separationReply) return separationReply;
   if (/(元気|げんき)[？?。！!]*$/.test(currentTopic)) {
     return "うん、元気だよ！今日は何してたの？";
@@ -327,21 +338,21 @@ export function buildReply(decision, transcript = "", history = [], favoriteTopi
   return replies[decision.supportMode] ?? replies.listen;
 }
 
-export function refineGuardianReply(decision, transcript = "", history = [], favoriteTopics = []) {
+export function refineGuardianReply(decision, transcript = "", history = [], favoriteTopics = [], childName = "") {
   if (!decision || decision.safetyLevel !== "normal") return decision;
   const currentTopic = shortConversationTopic(transcript);
-  const fixedDailyReply = buildSeparationReply(transcript, favoriteTopics) ?? ((
+  const fixedDailyReply = buildSeparationReply(transcript, favoriteTopics, childName) ?? ((
     /(元気|げんき)[？?。！!]*$/.test(currentTopic)
     || /(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)
     || /(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)
-  ) ? buildReply(decision, transcript, history, favoriteTopics) : null);
+  ) ? buildReply(decision, transcript, history, favoriteTopics, childName) : null);
   const soundsLikeCounselingBot = /(きみはどう|今日はどんな(?:気持ち|気分)|今どんな(?:気持ち|気分)|お話ししてくれてありがとう)/.test(
     String(decision.replyText ?? ""),
   );
   if (!fixedDailyReply && !soundsLikeCounselingBot) return decision;
   return Object.freeze({
     ...decision,
-    replyText: fixedDailyReply ?? buildReply(decision, transcript, history, favoriteTopics),
+    replyText: fixedDailyReply ?? buildReply(decision, transcript, history, favoriteTopics, childName),
   });
 }
 
@@ -556,6 +567,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     transcript: input.confirmedTranscript,
     history: conversationHistory,
     favoriteTopics: registeredSample?.favoriteTopics ?? [],
+    childName: registeredSample?.childName ?? "",
   });
   const routedDecision = routed.decision;
   if (!routed.ok || !routedDecision || routedDecision.safetyLevel !== "normal") {
@@ -583,12 +595,24 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     return;
   }
 
-  const decision = refineGuardianReply(
+  const refinedDecision = refineGuardianReply(
     routedDecision,
     input.confirmedTranscript,
     conversationHistory,
     registeredSample?.favoriteTopics ?? [],
+    registeredSample?.childName ?? "",
   );
+
+  const convertedReply = await toChildHiragana(refinedDecision.replyText);
+  const fallbackReply = isChildHiragana(convertedReply)
+    ? convertedReply
+    : await toChildHiragana(buildReply(precheck, input.confirmedTranscript, conversationHistory));
+  const decision = Object.freeze({
+    ...refinedDecision,
+    replyText: isChildHiragana(fallbackReply)
+      ? fallbackReply
+      : "だいじょうぶだよ。いまいっしょにいるおとなと、いっしょにまとうね。",
+  });
 
   if (!replyIsAllowed(decision.replyText)) {
     const result = createAdultHandoff(
@@ -616,6 +640,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       const audio = await activeVoiceProvider.synthesize({
         voiceId: registeredSample.voiceClone.voiceId,
         text: decision.replyText,
+        speed: registeredSample.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
       });
       clonedReplyAudioUrl = storeGeneratedReplyAudio(audio);
     } catch (error) {
@@ -669,7 +694,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     }
     responseBundle = await neutralMediaProvider.generate({
       decision,
-      replyText: "おへんじを準備できなかったよ。そばのおとなといっしょに、もう一度ためしてね。",
+      replyText: "おへんじをじゅんびできなかったよ。そばのおとなといっしょに、もういちどためしてね。",
       consentValid: true,
       faultMode: "media_unavailable",
     });
@@ -687,6 +712,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       ? decision.replyText
       : null,
     conversationTurn: Math.floor(conversationHistory.length / 2) + 1,
+    speechRate: registeredSample?.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
     responseBundle,
     bundle: responseBundle,
     completedAt: new Date().toISOString(),
@@ -895,8 +921,8 @@ async function apiHandler(req, res, url, runtime = {}) {
     }
     try {
       const input = await readJson(req, 16 * 1024);
-      const updated = guardianSampling.updatePreferences(profileId, input);
-      sendJson(res, 200, samplingApiView(updated));
+      guardianSampling.updatePreferences(profileId, input);
+      sendJson(res, 200, samplingApiView(guardianSampling.status(profileId)));
     } catch (error) {
       sendJson(res, error instanceof GuardianSamplingError ? error.statusCode : 400, {
         error: error.code || "PREFERENCES_REQUEST_INVALID",

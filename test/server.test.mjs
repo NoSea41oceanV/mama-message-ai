@@ -356,15 +356,15 @@ test("conversationId continues demo replies with the previous exchange", async (
   });
   assert.equal(first.pending.conversationId, conversationId);
   assert.equal(first.result.conversationId, conversationId);
-  assert.match(first.result.replyText, /ブロックでおうち/);
+  assert.match(first.result.replyText, /ぶろっくでおうち/);
 
   const second = await createAndWait({
     conversationId,
     confirmedTranscript: "そのあと庭も作ったよ",
   });
   assert.match(second.result.replyText, /さっきの/);
-  assert.match(second.result.replyText, /ブロックでおうちを作ったよ/);
-  assert.match(second.result.replyText, /そのあと庭も作ったよ/);
+  assert.match(second.result.replyText, /ぶろっくでおうちをつくったよ/);
+  assert.match(second.result.replyText, /そのあとにわもつくったよ/);
 
   const independent = await createAndWait({
     conversationId: `conversation-${crypto.randomUUID()}`,
@@ -430,9 +430,11 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "avatarAssetId",
     "configured",
     "consentId",
+    "childName",
     "faceApproved",
     "favoriteTopics",
     "posterUrl",
+    "speechRate",
     "subjectLabel",
     "videoGeneration",
     "voiceApproved",
@@ -445,6 +447,8 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(created.faceApproved, true);
   assert.equal(created.voiceApproved, true);
   assert.deepEqual(created.favoriteTopics, []);
+  assert.equal(created.childName, "");
+  assert.equal(created.speechRate, 0.82);
   assert.deepEqual(created.videoGeneration, { status: "not_started" });
   assert.doesNotMatch(JSON.stringify(created), /server-test-(photo|voice)/);
 
@@ -458,11 +462,17 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   const preferencesResponse = await fetch(`${baseUrl}/api/sampling/preferences`, {
     method: "POST",
     headers: samplingProfileHeaders,
-    body: JSON.stringify({ favoriteTopics: ["恐竜", "電車"] }),
+    body: JSON.stringify({
+      favoriteTopics: ["恐竜", "電車"],
+      childName: "ひなたちゃん",
+      speechRate: 0.7,
+    }),
   });
   assert.equal(preferencesResponse.status, 200);
   const preferences = await preferencesResponse.json();
   assert.deepEqual(preferences.favoriteTopics, ["恐竜", "電車"]);
+  assert.equal(preferences.childName, "ひなたちゃん");
+  assert.equal(preferences.speechRate, 0.7);
 
   const photoResponse = await fetch(`${baseUrl}${created.posterUrl}`);
   assert.equal(photoResponse.status, 200);
@@ -485,7 +495,10 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(result.responseBundle.posterUrl, created.posterUrl);
   assert.equal(result.responseBundle.audioUrl, null);
   assert.equal(result.responseBundle.speechSynthesis, true);
-  assert.match(result.responseBundle.subtitle, /恐竜のお話/);
+  assert.match(result.responseBundle.subtitle, /ひなたちゃん/);
+  assert.match(result.responseBundle.subtitle, /きょうりゅうのおはなし/);
+  assert.doesNotMatch(result.responseBundle.subtitle, /[一-龯々〆ヵヶァ-ヴA-Za-z]/u);
+  assert.equal(result.speechRate, 0.7);
   assert.equal(result.responseBundle.replyText, result.replyText);
   assert.equal(result.responseBundle.guardianSampling.photoUsed, true);
   assert.equal(result.responseBundle.guardianSampling.voiceSampleRegistered, true);
@@ -526,10 +539,12 @@ test("ElevenLabs clone audio is generated for a registered guardian reply", asyn
       assert.equal(mimeType, "audio/wav");
       return { provider: "elevenlabs", voiceId: `voice-integration-${calls.clone}` };
     },
-    synthesize: async ({ voiceId, text }) => {
+    synthesize: async ({ voiceId, text, speed }) => {
       calls.synthesize += 1;
       assert.equal(voiceId, "voice-integration-2");
       assert.ok(text.length > 0);
+      assert.doesNotMatch(text, /[一-龯々〆ヵヶァ-ヴA-Za-z]/u);
+      assert.equal(speed, 0.82);
       return { bytes: Buffer.from("ID3-cloned-reply"), mimeType: "audio/mpeg" };
     },
     deleteVoice: async (voiceId) => {

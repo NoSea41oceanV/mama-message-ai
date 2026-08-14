@@ -52,6 +52,8 @@ const revokeConsent = document.querySelector("#revokeConsent");
 const restoreConsent = document.querySelector("#restoreConsent");
 const consentAdminStatus = document.querySelector("#consentAdminStatus");
 const guardianLabel = document.querySelector("#guardianLabel");
+const childNameInput = document.querySelector("#childNameInput");
+const speechRateSelect = document.querySelector("#speechRateSelect");
 const favoriteTopicsInput = document.querySelector("#favoriteTopicsInput");
 const saveFavoriteTopicsButton = document.querySelector("#saveFavoriteTopicsButton");
 const favoriteTopicsStatus = document.querySelector("#favoriteTopicsStatus");
@@ -389,6 +391,9 @@ function renderSampling(sample) {
   favoriteTopicsInput.value = Array.isArray(sample?.favoriteTopics)
     ? sample.favoriteTopics.join("、")
     : "";
+  childNameInput.value = sample?.childName || "";
+  speechRateSelect.value = String(sample?.speechRate ?? 0.82);
+  if (!speechRateSelect.value) speechRateSelect.value = "0.82";
   saveFavoriteTopicsButton.disabled = !configured;
   deleteSampleButton.disabled = !configured;
   if (sample?.posterUrl && !state.samplePhoto) {
@@ -445,14 +450,18 @@ async function saveFavoriteTopics() {
     const response = await profileFetch("/api/sampling/preferences", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ favoriteTopics: favoriteTopicsFromInput() }),
+      body: JSON.stringify({
+        favoriteTopics: favoriteTopicsFromInput(),
+        childName: childNameInput.value.trim(),
+        speechRate: Number(speechRateSelect.value),
+      }),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || "好きなものを保存できませんでした");
     renderSampling(data);
-    favoriteTopicsStatus.textContent = data.favoriteTopics.length
-      ? `「${data.favoriteTopics.join("・")}」を会話の話題に使います。`
-      : "好きなものの登録を空にしました。";
+    const childCall = data.childName ? `${data.childName}とよびかけます。` : "よびかたは未設定です。";
+    const rateLabel = speechRateSelect.options[speechRateSelect.selectedIndex]?.textContent || "ゆっくり";
+    favoriteTopicsStatus.textContent = `${childCall} はなすはやさは「${rateLabel}」です。`;
   } catch (error) {
     favoriteTopicsStatus.textContent = error.message;
   } finally {
@@ -492,6 +501,8 @@ async function saveSampling() {
       body: JSON.stringify({
         subjectLabel,
         favoriteTopics: favoriteTopicsFromInput(),
+        childName: childNameInput.value.trim(),
+        speechRate: Number(speechRateSelect.value),
         ...(state.samplePhoto ? {
           photoBase64: state.samplePhoto.base64,
           photoType: state.samplePhoto.type,
@@ -1007,7 +1018,7 @@ async function playResponse() {
   const utterance = new SpeechSynthesisUtterance(bundle.subtitle);
   state.responseUtterance = utterance;
   utterance.lang = "ja-JP";
-  utterance.rate = 0.86;
+  utterance.rate = Number(state.response.speechRate ?? 0.82);
   utterance.pitch = 1.04;
   utterance.addEventListener("start", () => {
     if (!hasVideo) startPortraitAnimation({ syntheticSpeech: true });

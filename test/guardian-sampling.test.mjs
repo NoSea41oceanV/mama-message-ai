@@ -67,13 +67,31 @@ test("favorite topics are normalized and update without replacing guardian media
   }));
   const before = store.resolve(first.consentId, first.avatarAssetId);
   assert.deepEqual(first.favoriteTopics, ["恐竜", "電車", "プリキュア"]);
-  const updated = store.updatePreferences({ favoriteTopics: "ブロック、動物\n絵本" });
+  const updated = store.updatePreferences({
+    favoriteTopics: "ブロック、動物\n絵本",
+    childName: " ひなたちゃん ",
+    speechRate: 0.7,
+  });
   const after = store.resolve(updated.consentId, updated.avatarAssetId);
   assert.deepEqual(updated.favoriteTopics, ["ブロック", "動物", "絵本"]);
   assert.deepEqual(after.favoriteTopics, ["ブロック", "動物", "絵本"]);
+  assert.equal(updated.childName, "ひなたちゃん");
+  assert.equal(after.childName, "ひなたちゃん");
+  assert.equal(updated.speechRate, 0.7);
+  assert.equal(after.speechRate, 0.7);
   assert.equal(after.photo, before.photo);
   assert.equal(after.voice, before.voice);
   assert.equal(updated.consentId, first.consentId);
+});
+
+test("child calling name and speech rate use safe bounded defaults", () => {
+  const store = createGuardianSamplingStore();
+  const first = store.register(validRegistration({ childName: "あおいちゃん", speechRate: 99 }));
+  assert.equal(first.childName, "あおいちゃん");
+  assert.equal(first.speechRate, 1.2);
+  const updated = store.updatePreferences({ speechRate: "invalid" });
+  assert.equal(updated.childName, "あおいちゃん");
+  assert.equal(updated.speechRate, 0.82);
 });
 
 test("voice-only replacement preserves the guardian photo and consent identifiers", () => {

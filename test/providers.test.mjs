@@ -65,7 +65,11 @@ test("ElevenLabs clones a sample and synthesizes Japanese reply audio", async ()
     mimeType: "audio/wav",
     name: "Mama Message test",
   });
-  const audio = await provider.synthesize({ voiceId: cloned.voiceId, text: "お話ししてくれてありがとう。" });
+  const audio = await provider.synthesize({
+    voiceId: cloned.voiceId,
+    text: "おはなししてくれてありがとう。",
+    speed: 0.7,
+  });
 
   assert.equal(provider.available, true);
   assert.equal(cloned.voiceId, "voice-test-123");
@@ -73,7 +77,9 @@ test("ElevenLabs clones a sample and synthesizes Japanese reply audio", async ()
   assert.ok(requests[0].init.body instanceof FormData);
   assert.ok(requests[0].init.body.get("files") instanceof Blob);
   assert.match(requests[1].url, /text-to-speech\/voice-test-123/);
-  assert.equal(JSON.parse(requests[1].init.body).language_code, "ja");
+  const speechBody = JSON.parse(requests[1].init.body);
+  assert.equal(speechBody.language_code, "ja");
+  assert.equal(speechBody.voice_settings.speed, 0.7);
   assert.equal(audio.mimeType, "audio/mpeg");
   assert.match(audio.bytes.toString(), /^ID3/);
 });
@@ -466,6 +472,7 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   const result = await provider.classifyAndReply({
     transcript: "ブロックでおうちを作れたよ",
     favoriteTopics: ["恐竜", "電車"],
+    childName: "ひなたちゃん",
     history: [
       { role: "user", content: "きのうはタワーを作ったよ" },
       { role: "assistant", content: "高くできたんだね。" },
@@ -484,8 +491,10 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.match(request.body.messages[0].content, /質問は多くても1つ/);
   assert.match(request.body.messages[0].content, /分離不安だけを理由に adult_handoff にしない/);
   assert.match(request.body.messages[0].content, /「すぐ迎えに行く」「もうすぐ着く」/);
+  assert.match(request.body.messages[0].content, /ひらがなと句読点だけ/);
   assert.deepEqual(request.body.messages.slice(1), [
     { role: "system", content: "登録された好きなもの: 恐竜、電車。必要なときだけ、この中から一つを自然な安心材料や遊びの話題として使ってください。" },
+    { role: "system", content: "こどものよびかた: ひなたちゃん。必要なときだけ、この呼び方で自然に呼びかけてください。" },
     { role: "user", content: "きのうはタワーを作ったよ" },
     { role: "assistant", content: "高くできたんだね。" },
     { role: "user", content: "ブロックでおうちを作れたよ" },
@@ -494,6 +503,7 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.equal(result.metadata.resolvedModel, "provider/header-model");
   assert.equal(result.metadata.usage.total_tokens, 50);
   assert.equal(result.metadata.favoriteTopicsCount, 2);
+  assert.equal(result.metadata.childNameConfigured, true);
   assert.equal(result.metadata.headers["x-orca-request-id"], "orca-request-1");
 });
 

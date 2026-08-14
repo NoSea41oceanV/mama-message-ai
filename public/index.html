@@ -158,10 +158,19 @@
         <label class="field-label" for="guardianLabel">子どもからの呼び方</label>
         <input id="guardianLabel" class="text-input" type="text" maxlength="20" value="ママ" autocomplete="off">
         <div class="favorite-topics-panel">
+          <label class="field-label" for="childNameInput">こどものよびかた</label>
+          <input id="childNameInput" class="text-input" type="text" maxlength="20" placeholder="れい：ひなたちゃん" autocomplete="off">
+          <label class="field-label settings-field" for="speechRateSelect">はなすはやさ</label>
+          <select id="speechRateSelect">
+            <option value="0.7">とてもゆっくり</option>
+            <option value="0.82" selected>ゆっくり</option>
+            <option value="1">ふつう</option>
+            <option value="1.12">はやめ</option>
+          </select>
           <label class="field-label" for="favoriteTopicsInput">その子の好きなもの</label>
           <input id="favoriteTopicsInput" class="text-input" type="text" maxlength="180" placeholder="例：恐竜、電車、プリキュア" autocomplete="off">
           <p class="sample-note">最大5つ。「、」で区切ると、待っている間の安心できる話題に使います。</p>
-          <button class="secondary-button compact" id="saveFavoriteTopicsButton" type="button" disabled>好きなものを保存</button>
+          <button class="secondary-button compact" id="saveFavoriteTopicsButton" type="button" disabled>おはなし設定を保存</button>
           <p id="favoriteTopicsStatus" class="inline-status" role="status"></p>
         </div>
         <div class="sample-grid">
@@ -231,6 +240,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=24"></script>
+    <script type="module" src="/app.js?v=25"></script>
   </body>
 </html>

@@ -217,7 +217,7 @@ export function classifyTranscript(transcript) {
   }
 
   const urgent = /(死にたい|消えたい|息ができない|火事|血が止まらない|今すぐ助けて|毒を飲んだ|意識がない)/;
-  const adultRequired = /(助けて|叩かれ|殴られ|蹴られ|触られ|痛い|けが|怖い人|帰れない|迷子|ひとりぼっち|知らない人)/;
+  const adultRequired = /(叩かれ|殴られ|蹴られ|無理やり触られ|体を触られ|けがをした|血が出て|怖い人|帰れない|迷子|知らない人(?:が|に).*(?:ついて|追いかけ|連れて)|(?:怖い|危ない|閉じ込め|追いかけ).{0,16}助けて|助けて.{0,16}(?:怖い|危ない|閉じ込め|追いかけ))/;
   if (urgent.test(value)) {
     return { safetyLevel: "urgent", supportMode: "adult_handoff", emotion: ["fear"], reasonCodes: ["URGENT_LANGUAGE"] };
   }
@@ -259,6 +259,15 @@ function shortConversationTopic(value, maximumLength = 28) {
 
 export function buildReply(decision, transcript = "", history = []) {
   const currentTopic = shortConversationTopic(transcript);
+  if (/(元気|げんき)[？?。！!]*$/.test(currentTopic)) {
+    return "うん、元気だよ！今日は何してたの？";
+  }
+  if (/(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)) {
+    return "少しならお話できるよ。どうしたの？";
+  }
+  if (/(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)) {
+    return "もちろん。一緒に見てみよう。どの問題で困ってる？";
+  }
   const priorMessage = Array.isArray(history)
     ? [...history].reverse().find((message) => message?.role === "user" && String(message.content ?? "").trim())
     : null;
@@ -278,6 +287,24 @@ export function buildReply(decision, transcript = "", history = []) {
     clarify: "うまく聞き取れなかったよ。そばの大人と、もう一度お話してみようね。",
   };
   return replies[decision.supportMode] ?? replies.listen;
+}
+
+export function refineGuardianReply(decision, transcript = "", history = []) {
+  if (!decision || decision.safetyLevel !== "normal") return decision;
+  const currentTopic = shortConversationTopic(transcript);
+  const fixedDailyReply = (
+    /(元気|げんき)[？?。！!]*$/.test(currentTopic)
+    || /(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)
+    || /(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)
+  ) ? buildReply(decision, transcript, history) : null;
+  const soundsLikeCounselingBot = /(きみはどう|今日はどんな(?:気持ち|気分)|今どんな(?:気持ち|気分)|お話ししてくれてありがとう)/.test(
+    String(decision.replyText ?? ""),
+  );
+  if (!fixedDailyReply && !soundsLikeCounselingBot) return decision;
+  return Object.freeze({
+    ...decision,
+    replyText: fixedDailyReply ?? buildReply(decision, transcript, history),
+  });
 }
 
 export function replyIsAllowed(replyText) {
@@ -491,9 +518,9 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     transcript: input.confirmedTranscript,
     history: conversationHistory,
   });
-  const decision = routed.decision;
-  if (!routed.ok || !decision || decision.safetyLevel !== "normal") {
-    const safeDecision = decision ?? {
+  const routedDecision = routed.decision;
+  if (!routed.ok || !routedDecision || routedDecision.safetyLevel !== "normal") {
+    const safeDecision = routedDecision ?? {
       safetyLevel: "uncertain",
       supportMode: "adult_handoff",
       emotion: ["unknown"],
@@ -516,6 +543,12 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     });
     return;
   }
+
+  const decision = refineGuardianReply(
+    routedDecision,
+    input.confirmedTranscript,
+    conversationHistory,
+  );
 
   if (!replyIsAllowed(decision.replyText)) {
     const result = createAdultHandoff(

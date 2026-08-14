@@ -11,7 +11,13 @@ process.env.VIDEO_GENERATION_PROVIDER = "disabled";
 process.env.VOICE_CLONING_PROVIDER = "disabled";
 process.env.ELEVENLABS_API_KEY = "";
 
-const { buildReply, classifyTranscript, createAppServer, replyIsAllowed } = await import("../server.mjs");
+const {
+  buildReply,
+  classifyTranscript,
+  createAppServer,
+  refineGuardianReply,
+  replyIsAllowed,
+} = await import("../server.mjs");
 
 let server;
 let baseUrl;
@@ -108,6 +114,34 @@ test("routes urgent language to an adult without avatar output", () => {
   const decision = classifyTranscript("息ができない、今すぐ助けて");
   assert.equal(decision.safetyLevel, "urgent");
   assert.equal(decision.supportMode, "adult_handoff");
+});
+
+test("keeps harmless short conversation out of the safety handoff", () => {
+  assert.equal(classifyTranscript("今日暇？").safetyLevel, "normal");
+  assert.equal(classifyTranscript("宿題を助けて").safetyLevel, "normal");
+  assert.equal(buildReply(classifyTranscript("今日暇？"), "今日暇？"), "少しならお話できるよ。どうしたの？");
+  assert.equal(buildReply(classifyTranscript("元気？"), "元気？"), "うん、元気だよ！今日は何してたの？");
+});
+
+test("rewrites counseling-bot phrasing into a natural daily reply", () => {
+  const decision = {
+    safetyLevel: "normal",
+    supportMode: "listen",
+    emotion: ["neutral"],
+    reasonCodes: ["SMALL_TALK"],
+    replyText: "うん、元気だよ。きみはどう？今日はどんな気分？",
+    voiceTone: "warm",
+    expression: "smiling",
+  };
+  const refined = refineGuardianReply(decision, "元気？");
+  assert.equal(refined.replyText, "うん、元気だよ！今日は何してたの？");
+  assert.equal(refined.safetyLevel, "normal");
+  assert.equal(refined.voiceTone, "warm");
+});
+
+test("still hands concrete danger to an adult", () => {
+  assert.equal(classifyTranscript("知らない人がついてくる、助けて").safetyLevel, "adult_required");
+  assert.equal(classifyTranscript("怖い人に追いかけられてる").safetyLevel, "adult_required");
 });
 
 test("classifies transition anxiety and basic needs", async () => {

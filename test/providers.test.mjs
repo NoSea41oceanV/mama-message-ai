@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createOrcaRouterProvider } from "../lib/providers/orcarouter.mjs";
+import {
+  ORCAROUTER_SYSTEM_PROMPT,
+  createOrcaRouterProvider,
+} from "../lib/providers/orcarouter.mjs";
 import {
   DidVideoProviderError,
   createDidVideoProvider,
@@ -474,6 +477,10 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.equal(request.body.response_format.json_schema.strict, true);
   assert.equal(request.body.response_format.json_schema.schema.additionalProperties, false);
   assert.deepEqual(request.body.response_format.json_schema.schema.required, Object.keys(validOrcaResponse));
+  assert.equal(request.body.messages[0].content, ORCAROUTER_SYSTEM_PROMPT);
+  assert.match(request.body.messages[0].content, /「今日暇？」→ normal/);
+  assert.match(request.body.messages[0].content, /短い、くだけている、意図が少し曖昧という理由だけで/);
+  assert.match(request.body.messages[0].content, /質問は多くても1つ/);
   assert.deepEqual(request.body.messages.slice(1), [
     { role: "user", content: "きのうはタワーを作ったよ" },
     { role: "assistant", content: "高くできたんだね。" },

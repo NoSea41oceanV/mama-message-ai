@@ -4,6 +4,11 @@ import { buildReply, classifyTranscript, createAppServer, replyIsAllowed } from 
 
 let server;
 let baseUrl;
+const samplingProfileId = "11111111-1111-4111-8111-111111111111";
+const samplingProfileHeaders = {
+  "content-type": "application/json",
+  "x-guardian-profile-id": samplingProfileId,
+};
 
 const samplingPhoto = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -30,7 +35,7 @@ function samplingRegistration(overrides = {}) {
   };
 }
 
-async function createAndWait(overrides = {}) {
+async function createAndWait(overrides = {}, guardianProfileId = null) {
   const input = {
     sessionId: `session-${crypto.randomUUID()}`,
     transcriptId: `tr-${crypto.randomUUID()}`,
@@ -42,14 +47,19 @@ async function createAndWait(overrides = {}) {
   };
   const create = await fetch(`${baseUrl}/api/responses`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(guardianProfileId ? { "x-guardian-profile-id": guardianProfileId } : {}),
+    },
     body: JSON.stringify(input),
   });
   const pending = await create.json();
   assert.equal(create.status, 202);
   const deadline = Date.now() + 4000;
   while (Date.now() < deadline) {
-    const result = await (await fetch(`${baseUrl}/api/responses/${pending.requestId}`)).json();
+    const result = await (await fetch(`${baseUrl}/api/responses/${pending.requestId}`, {
+      headers: guardianProfileId ? { "x-guardian-profile-id": guardianProfileId } : {},
+    })).json();
     if (result.status !== "PENDING") return { input, pending, result };
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -275,7 +285,7 @@ test("technical logs do not expose child transcript or reply text", async () => 
 test("guardian sampling API registers, previews, uses, and deletes private samples", async () => {
   const createdResponse = await fetch(`${baseUrl}/api/sampling`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: samplingProfileHeaders,
     body: JSON.stringify(samplingRegistration()),
   });
   assert.equal(createdResponse.status, 201);
@@ -297,9 +307,9 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(created.voiceApproved, true);
   assert.doesNotMatch(JSON.stringify(created), /server-test-(photo|voice)/);
 
-  const status = await (await fetch(`${baseUrl}/api/sampling`)).json();
+  const status = await (await fetch(`${baseUrl}/api/sampling`, { headers: samplingProfileHeaders })).json();
   assert.deepEqual(status, created);
-  const consent = await (await fetch(`${baseUrl}/api/consent`)).json();
+  const consent = await (await fetch(`${baseUrl}/api/consent`, { headers: samplingProfileHeaders })).json();
   assert.equal(consent.source, "custom-sampling");
   assert.equal(consent.consentId, created.consentId);
   assert.equal(consent.avatarAssetId, created.avatarAssetId);
@@ -318,7 +328,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   const { result } = await createAndWait({
     consentId: created.consentId,
     avatarAssetId: created.avatarAssetId,
-  });
+  }, samplingProfileId);
   assert.equal(result.status, "READY");
   assert.equal(result.responseBundle.fallbackLevel, 3);
   assert.equal(result.responseBundle.posterUrl, created.posterUrl);
@@ -334,26 +344,26 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     confirmedTranscript: "知らない人がいて怖い、助けて",
     consentId: created.consentId,
     avatarAssetId: created.avatarAssetId,
-  });
+  }, samplingProfileId);
   assert.equal(safetyResult.status, "ADULT_HANDOFF");
   assert.equal(safetyResult.responseBundle, null);
   assert.equal(JSON.stringify(safetyResult).includes(created.posterUrl), false);
   assert.equal(JSON.stringify(safetyResult).includes(created.voicePreviewUrl), false);
 
-  const deletedResponse = await fetch(`${baseUrl}/api/sampling`, { method: "DELETE" });
+  const deletedResponse = await fetch(`${baseUrl}/api/sampling`, { method: "DELETE", headers: samplingProfileHeaders });
   assert.equal(deletedResponse.status, 200);
   const deleted = await deletedResponse.json();
   assert.equal(deleted.deleted, true);
   assert.equal(deleted.configured, false);
   assert.equal((await fetch(`${baseUrl}${created.posterUrl}`)).status, 404);
   assert.equal((await fetch(`${baseUrl}${created.voicePreviewUrl}`)).status, 404);
-  assert.equal((await (await fetch(`${baseUrl}/api/consent`)).json()).consentId, "demo-consent-001");
+  assert.equal((await (await fetch(`${baseUrl}/api/consent`, { headers: samplingProfileHeaders })).json()).consentId, "demo-consent-001");
 });
 
 test("sampling API rejects missing consent, MIME spoofing, and cross-site mutation", async () => {
   const missingConsent = await fetch(`${baseUrl}/api/sampling`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: samplingProfileHeaders,
     body: JSON.stringify(samplingRegistration({ voiceApproved: false })),
   });
   assert.equal(missingConsent.status, 422);
@@ -361,7 +371,7 @@ test("sampling API rejects missing consent, MIME spoofing, and cross-site mutati
 
   const spoofed = await fetch(`${baseUrl}/api/sampling`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: samplingProfileHeaders,
     body: JSON.stringify(samplingRegistration({ photoBase64: samplingVoice.toString("base64") })),
   });
   assert.equal(spoofed.status, 400);
@@ -371,6 +381,7 @@ test("sampling API rejects missing consent, MIME spoofing, and cross-site mutati
     method: "POST",
     headers: {
       "content-type": "application/json",
+      "x-guardian-profile-id": samplingProfileId,
       origin: "https://attacker.example",
     },
     body: JSON.stringify(samplingRegistration()),
@@ -379,27 +390,53 @@ test("sampling API rejects missing consent, MIME spoofing, and cross-site mutati
   assert.equal((await crossSite.json()).error, "CROSS_SITE_REQUEST_FORBIDDEN");
 });
 
+test("one guardian profile cannot use another profile's sample", async () => {
+  const profileA = "22222222-2222-4222-8222-222222222222";
+  const profileB = "33333333-3333-4333-8333-333333333333";
+  const created = await (await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-guardian-profile-id": profileA },
+    body: JSON.stringify(samplingRegistration()),
+  })).json();
+  const profileBStatus = await (await fetch(`${baseUrl}/api/sampling`, {
+    headers: { "x-guardian-profile-id": profileB },
+  })).json();
+  assert.equal(profileBStatus.configured, false);
+
+  const { result } = await createAndWait({
+    consentId: created.consentId,
+    avatarAssetId: created.avatarAssetId,
+  }, profileB);
+  assert.equal(result.status, "ADULT_HANDOFF");
+  assert.ok(result.routerDecision.reasonCodes.includes("CONSENT_INVALID"));
+
+  await fetch(`${baseUrl}/api/sampling`, {
+    method: "DELETE",
+    headers: { "x-guardian-profile-id": profileA },
+  });
+});
+
 test("revoking consent erases an active custom sample", async () => {
   const created = await (await fetch(`${baseUrl}/api/sampling`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: samplingProfileHeaders,
     body: JSON.stringify(samplingRegistration()),
   })).json();
 
   const revoke = await fetch(`${baseUrl}/api/consent`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: samplingProfileHeaders,
     body: JSON.stringify({ action: "revoke" }),
   });
   assert.equal(revoke.status, 200);
   assert.equal((await revoke.json()).active, false);
-  assert.equal((await (await fetch(`${baseUrl}/api/sampling`)).json()).configured, false);
+  assert.equal((await (await fetch(`${baseUrl}/api/sampling`, { headers: samplingProfileHeaders })).json()).configured, false);
   assert.equal((await fetch(`${baseUrl}${created.posterUrl}`)).status, 404);
   assert.equal((await fetch(`${baseUrl}${created.voicePreviewUrl}`)).status, 404);
 
   await fetch(`${baseUrl}/api/consent`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: samplingProfileHeaders,
     body: JSON.stringify({ action: "restore" }),
   });
 });

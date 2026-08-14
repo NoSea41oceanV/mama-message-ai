@@ -6,8 +6,11 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import {
   GuardianSamplingError,
-  createGuardianSamplingStore,
 } from "./lib/guardian-sampling.mjs";
+import {
+  GUARDIAN_PROFILE_ID_PATTERN,
+  createPersistentGuardianSamplingStore,
+} from "./lib/persistent-guardian-sampling.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
@@ -36,8 +39,11 @@ const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 2
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
-const guardianSampling = createGuardianSamplingStore();
+const guardianSampling = createPersistentGuardianSamplingStore({
+  directory: fileURLToPath(new URL("./.data/guardian-samples/", import.meta.url)),
+});
 const guardianSamplingPhrase = "お話ししてくれてありがとう。いつも応援しているよ。";
+const demoConsentByProfile = new Map();
 
 const demoConsent = {
   consentId: "demo-consent-001",
@@ -142,6 +148,21 @@ function samplingMutationAllowed(req) {
   } catch {
     return false;
   }
+}
+
+function readGuardianProfileId(req) {
+  const raw = String(req.headers["x-guardian-profile-id"] ?? "").trim();
+  if (!raw) return null;
+  return GUARDIAN_PROFILE_ID_PATTERN.test(raw) ? raw.toLowerCase() : false;
+}
+
+function profileDemoConsent(profileId) {
+  return {
+    ...demoConsent,
+    active: profileId
+      ? demoConsentByProfile.get(profileId) ?? true
+      : demoConsent.active,
+  };
 }
 
 export function classifyTranscript(transcript) {
@@ -328,10 +349,13 @@ async function finishResponse(requestId, input, startedAt) {
     return;
   }
 
-  const registeredSample = guardianSampling.resolve(input.consentId, input.avatarAssetId);
+  const registeredSample = input.guardianProfileId
+    ? guardianSampling.resolve(input.guardianProfileId, input.consentId, input.avatarAssetId)
+    : null;
+  const effectiveDemoConsent = profileDemoConsent(input.guardianProfileId);
   const demoConsentOk = input.consentId === demoConsent.consentId
     && input.avatarAssetId === demoConsent.avatarAssetId
-    && demoConsent.active
+    && effectiveDemoConsent.active
     && demoConsent.faceApproved
     && demoConsent.voiceApproved;
   const consentOk = Boolean(registeredSample) || demoConsentOk;
@@ -475,8 +499,13 @@ async function apiHandler(req, res, url) {
     return true;
   }
   if (url.pathname === "/api/sampling") {
+    const profileId = readGuardianProfileId(req);
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
     if (req.method === "GET") {
-      sendJson(res, 200, samplingApiView());
+      sendJson(res, 200, samplingApiView(guardianSampling.status(profileId)));
       return true;
     }
     if (req.method === "POST") {
@@ -490,7 +519,7 @@ async function apiHandler(req, res, url) {
       }
       try {
         const input = await readJson(req, 10 * 1024 * 1024);
-        sendJson(res, 201, samplingApiView(guardianSampling.register(input)));
+        sendJson(res, 201, samplingApiView(guardianSampling.register(profileId, input)));
       } catch (error) {
         const statusCode = error.message === "PAYLOAD_TOO_LARGE"
           ? 413
@@ -506,7 +535,7 @@ async function apiHandler(req, res, url) {
         sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
         return true;
       }
-      const result = guardianSampling.delete();
+      const result = guardianSampling.delete(profileId);
       sendJson(res, 200, { ...samplingApiView(result), deleted: result.deleted });
       return true;
     }
@@ -524,22 +553,37 @@ async function apiHandler(req, res, url) {
     return true;
   }
   if (req.method === "GET" && url.pathname === "/api/consent") {
-    const samplingStatus = guardianSampling.status();
-    sendJson(res, 200, samplingStatus.configured && samplingStatus.active
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    const samplingStatus = profileId ? guardianSampling.status(profileId) : null;
+    sendJson(res, 200, samplingStatus?.configured && samplingStatus.active
       ? customConsentView(samplingStatus)
-      : demoConsent);
+      : profileDemoConsent(profileId));
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/consent") {
     try {
+      const profileId = readGuardianProfileId(req);
+      if (profileId === false) {
+        sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+        return true;
+      }
       const input = await readJson(req);
       if (!new Set(["revoke", "restore"]).has(input.action)) {
         sendJson(res, 400, { error: "CONSENT_ACTION_INVALID" });
         return true;
       }
-      if (input.action === "revoke") guardianSampling.revoke();
-      demoConsent.active = input.action === "restore";
-      sendJson(res, 200, demoConsent);
+      if (profileId) {
+        if (input.action === "revoke") guardianSampling.revoke(profileId);
+        demoConsentByProfile.set(profileId, input.action === "restore");
+        sendJson(res, 200, profileDemoConsent(profileId));
+      } else {
+        demoConsent.active = input.action === "restore";
+        sendJson(res, 200, demoConsent);
+      }
     } catch {
       sendJson(res, 400, { error: "CONSENT_REQUEST_INVALID" });
     }
@@ -571,7 +615,13 @@ async function apiHandler(req, res, url) {
 
   if (req.method === "POST" && url.pathname === "/api/responses") {
     try {
+      const guardianProfileId = readGuardianProfileId(req);
+      if (guardianProfileId === false) {
+        sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+        return true;
+      }
       const input = await readJson(req);
+      input.guardianProfileId = guardianProfileId;
       input.confirmedTranscript = String(input.confirmedTranscript ?? "").trim();
       if (!input.confirmedTranscript) {
         sendJson(res, 400, { error: "CONFIRMED_TRANSCRIPT_REQUIRED" });
@@ -586,7 +636,7 @@ async function apiHandler(req, res, url) {
         sendJson(res, 400, { error: "RESPONSE_IDENTIFIERS_REQUIRED" });
         return true;
       }
-      const key = String(input.idempotencyKey || `${input.sessionId}:${input.transcriptId}`);
+      const key = `${guardianProfileId || "legacy"}:${String(input.idempotencyKey || `${input.sessionId}:${input.transcriptId}`)}`;
       if (idempotency.has(key)) {
         sendJson(res, 202, responses.get(idempotency.get(key)));
         return true;
@@ -595,6 +645,7 @@ async function apiHandler(req, res, url) {
       const record = {
         requestId,
         status: "PENDING",
+        guardianProfileId,
         createdAt: new Date().toISOString(),
       };
       responses.set(requestId, record);
@@ -622,13 +673,26 @@ async function apiHandler(req, res, url) {
 
   const responseMatch = url.pathname.match(/^\/api\/responses\/([^/]+)$/);
   if (req.method === "GET" && responseMatch) {
+    const guardianProfileId = readGuardianProfileId(req);
+    if (guardianProfileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
     const record = responses.get(responseMatch[1]);
-    sendJson(res, record ? 200 : 404, record ?? { error: "NOT_FOUND" });
+    const allowed = record && (!record.guardianProfileId || record.guardianProfileId === guardianProfileId);
+    sendJson(res, allowed ? 200 : 404, allowed ? record : { error: "NOT_FOUND" });
     return true;
   }
   if (req.method === "DELETE" && responseMatch) {
+    const guardianProfileId = readGuardianProfileId(req);
+    if (guardianProfileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
     const requestId = responseMatch[1];
-    const existed = responses.delete(requestId);
+    const record = responses.get(requestId);
+    const allowed = record && (!record.guardianProfileId || record.guardianProfileId === guardianProfileId);
+    const existed = allowed ? responses.delete(requestId) : false;
     for (const [key, storedRequestId] of idempotency) {
       if (storedRequestId === requestId) idempotency.delete(key);
     }

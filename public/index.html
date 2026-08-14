@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おたすけメッセージ</title>
-    <link rel="stylesheet" href="/styles.css?v=15">
+    <link rel="stylesheet" href="/styles.css?v=16">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -167,7 +167,7 @@
           <button class="primary-button" id="saveSampleButton" type="button">素材を登録</button>
           <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
         </div>
-        <p class="sample-note">登録素材はこのデモのメモリ内だけに保存され、サーバー再起動時に削除されます。</p>
+        <p class="sample-note">登録素材はこのブラウザの保護者プロフィールに紐づけて暗号化保存されます。別のプロフィールからは参照できません。</p>
         <p id="samplingStatus" class="inline-status" role="status"></p>
       </section>
       <h3>素材利用の管理</h3>
@@ -181,6 +181,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=15"></script>
+    <script type="module" src="/app.js?v=16"></script>
   </body>
 </html>

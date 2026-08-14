@@ -54,6 +54,31 @@ const saveSampleButton = document.querySelector("#saveSampleButton");
 const deleteSampleButton = document.querySelector("#deleteSampleButton");
 const samplingStatus = document.querySelector("#samplingStatus");
 
+const guardianProfileStorageKey = "guardian-ai.profile-id.v1";
+let guardianProfileId;
+
+function getGuardianProfileId() {
+  if (guardianProfileId) return guardianProfileId;
+  try {
+    const stored = localStorage.getItem(guardianProfileStorageKey);
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(stored || "")) {
+      guardianProfileId = stored;
+      return guardianProfileId;
+    }
+    guardianProfileId = crypto.randomUUID();
+    localStorage.setItem(guardianProfileStorageKey, guardianProfileId);
+  } catch {
+    guardianProfileId = crypto.randomUUID();
+  }
+  return guardianProfileId;
+}
+
+function profileFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("x-guardian-profile-id", getGuardianProfileId());
+  return fetch(url, { ...options, headers });
+}
+
 const state = {
   screen: "setup",
   sessionId: crypto.randomUUID(),
@@ -262,7 +287,7 @@ function renderSampling(sample) {
 }
 
 async function loadSampling() {
-  const response = await fetch("/api/sampling");
+  const response = await profileFetch("/api/sampling");
   if (!response.ok) throw new Error("登録状態を確認できませんでした");
   const sample = await response.json();
   renderSampling(sample);
@@ -270,7 +295,7 @@ async function loadSampling() {
 }
 
 async function refreshConsent() {
-  const response = await fetch("/api/consent");
+  const response = await profileFetch("/api/consent");
   if (!response.ok) throw new Error("同意情報を確認できませんでした");
   applyConsent(await response.json());
 }
@@ -293,7 +318,7 @@ async function saveSampling() {
   saveSampleButton.disabled = true;
   samplingStatus.textContent = "素材を登録しています";
   try {
-    const response = await fetch("/api/sampling", {
+    const response = await profileFetch("/api/sampling", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -327,7 +352,7 @@ async function deleteSampling() {
   deleteSampleButton.disabled = true;
   samplingStatus.textContent = "登録素材を削除しています";
   try {
-    const response = await fetch("/api/sampling", { method: "DELETE" });
+    const response = await profileFetch("/api/sampling", { method: "DELETE" });
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || "登録素材を削除できませんでした");
     state.samplePhoto = null;
@@ -412,7 +437,7 @@ async function pollResponse(requestId) {
   state.pollAbort = new AbortController();
   const started = Date.now();
   while (Date.now() - started < 30000) {
-    const response = await fetch(`/api/responses/${encodeURIComponent(requestId)}`, { signal: state.pollAbort.signal });
+    const response = await profileFetch(`/api/responses/${encodeURIComponent(requestId)}`, { signal: state.pollAbort.signal });
     const data = await response.json();
     if (data.status === "READY") {
       state.response = data;
@@ -443,7 +468,7 @@ async function createResponse() {
   }
   showScreen("waiting");
   try {
-    const response = await fetch("/api/responses", {
+    const response = await profileFetch("/api/responses", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -595,7 +620,7 @@ function resetFlow() {
   state.pollAbort?.abort();
   state.sessionId = crypto.randomUUID();
   state.transcriptId = null;
-  if (state.requestId) fetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  if (state.requestId) profileFetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
   state.requestId = null;
   state.response = null;
   transcriptInput.value = "";
@@ -612,7 +637,7 @@ function resetFlow() {
 
 function continueTalking() {
   stopSpeech();
-  if (state.requestId) fetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  if (state.requestId) profileFetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
   state.sessionId = crypto.randomUUID();
   state.transcriptId = null;
   state.requestId = null;
@@ -643,7 +668,7 @@ function applyConsent(consent) {
 }
 
 async function updateConsent(action) {
-  const response = await fetch("/api/consent", {
+  const response = await profileFetch("/api/consent", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action }),
@@ -711,7 +736,7 @@ backButton.addEventListener("click", () => {
 });
 window.addEventListener("pagehide", () => { stopTracks(); stopSampleTracks(); stopSpeech(); });
 
-Promise.all([fetch("/api/consent").then((response) => response.json()), loadSampling()])
+Promise.all([profileFetch("/api/consent").then((response) => response.json()), loadSampling()])
   .then(([consent]) => {
     applyConsent(consent);
     connectionStatus.textContent = "じゅんびできたよ";

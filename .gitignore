@@ -14,6 +14,7 @@ coverage/
 
 # Local caches and temporary output
 tmp/
+.data/
 .pptx-build/
 .social-research/
 *.log

@@ -43,10 +43,33 @@ test("OrcaRouter uses injected local functions without an API key", async () => 
   assert.equal(result.metadata.provider, "local");
 });
 
+test("OrcaRouter demo mode never sends externally even when a key exists", async () => {
+  let fetchCalls = 0;
+  const provider = createOrcaRouterProvider({
+    env: { ROUTER_PROVIDER: "demo", ORCAROUTER_API_KEY: "secret" },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("must not be called");
+    },
+    localClassifier: () => ({
+      safetyLevel: "normal",
+      supportMode: "celebrate",
+      emotion: ["joy"],
+      reasonCodes: ["LOCAL_CLASSIFIER"],
+    }),
+    localReplyBuilder: () => "できたね。うれしいね。",
+  });
+  const result = await provider.classifyAndReply("できたよ");
+  assert.equal(fetchCalls, 0);
+  assert.equal(provider.available, false);
+  assert.equal(result.error.code, "ORCAROUTER_DISABLED");
+  assert.equal(result.metadata.provider, "local");
+});
+
 test("OrcaRouter sends strict structured output and captures metadata", async () => {
   let request;
   const provider = createOrcaRouterProvider({
-    env: { ORCAROUTER_API_KEY: "secret" },
+    env: { ROUTER_PROVIDER: "orcarouter", ORCAROUTER_API_KEY: "secret" },
     fetchImpl: async (url, init) => {
       request = { url, init, body: JSON.parse(init.body) };
       return new Response(JSON.stringify({
@@ -79,7 +102,7 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
 
 test("OrcaRouter fails closed on invalid JSON", async () => {
   const provider = createOrcaRouterProvider({
-    env: { ORCAROUTER_API_KEY: "secret" },
+    env: { ROUTER_PROVIDER: "orcarouter", ORCAROUTER_API_KEY: "secret" },
     fetchImpl: async () => new Response(JSON.stringify({
       choices: [{ message: { content: "not-json" } }],
     }), { status: 200, headers: { "content-type": "application/json" } }),
@@ -93,7 +116,7 @@ test("OrcaRouter fails closed on invalid JSON", async () => {
 
 test("OrcaRouter timeout fails closed to adult handoff", async () => {
   const provider = createOrcaRouterProvider({
-    env: { ORCAROUTER_API_KEY: "secret" },
+    env: { ROUTER_PROVIDER: "orcarouter", ORCAROUTER_API_KEY: "secret" },
     timeoutMs: 5,
     fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });

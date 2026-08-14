@@ -27,13 +27,13 @@ Deadline: 2026-08-15 15:00 JST
   Spec ref: `prd.md > Epic 2`
   What to build: `safetyLevel`、`supportMode`、`emotion`、`reasonCodes`、返答文をstructured outputsで受け取り、通常メディアまたは安全引き継ぎへ分岐する。
   Acceptance: JSON Schema違反・タイムアウト・判定不能を通常返信へ流さず、`ADULT_HANDOFF`へ倒す。
-  Verify: fetch注入テストで正常応答、JSON不正、タイムアウトを確認する。ライブ疎通はAPIキー設定後の最終確認事項とする。
+  Verify: fetch注入テストで正常応答、JSON不正、タイムアウトを確認した。2026-08-14に公式API認証HTTP 200と、アプリ経路の `READY` / `generate_guardian_message` / `normal` / `encourage` / LEVEL 3を確認した。10秒timeoutでfail-closedした後、25秒へ調整した。
 
 - [x] **5. リクエストログを残す（Codex）**
   Spec ref: `prd.md > 9.2 コスト要件`
   What to build: モデル、原価、レイテンシ、ルート、ステータスを表示または保存する。
-  Acceptance: デモ用の代表リクエストで実測ログを1件以上確認できる。
-  Verify: 成功シナリオ実行後にログ画面または出力を確認する。
+  Acceptance: 代表リクエストでモデル、レイテンシ、トークン、ステータス、fallback levelを確認でき、APIキーと発話本文を記録しない。未取得の費用は未計測と明記する。
+  Verify: 2回のライブ実行で `qwen/qwen3.7-plus`、約20.5秒/21.5秒、prompt tokens 58、completion tokens 1073/1113を確認した。`costUsd` / `providerRoute` は `null` のため、費用は未計測とする。
 
 - [x] **6. メディア生成境界とフォールバックを実装する（Codex）**
   Spec ref: `prd.md > Epic 4`
@@ -57,7 +57,7 @@ Deadline: 2026-08-15 15:00 JST
   Spec ref: `prd.md > 2.2 提出時の成功条件`
   What to build: 3ブランチを統合し、成功・安全・API失敗の3ケースを確認する。
   Acceptance: `main` で3ケースが再現し、APIキーや個人情報が含まれない。
-  Verify: 起動手順どおりに別環境で起動し、3ケースを手動確認する。
+  Verify: 起動手順どおりに別環境で起動し、3ケースを手動確認する。外部送信は `ROUTER_PROVIDER=orcarouter` の場合だけ有効になることも確認する。
 
 - [ ] **10. 3分デモ動画を完成させる（Codex、人間レビュー）**
   Spec ref: `prd.md > 11.1 3分デモ動画の構成`

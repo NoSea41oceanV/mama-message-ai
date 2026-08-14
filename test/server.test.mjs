@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { buildReply, classifyTranscript, createAppServer, replyIsAllowed } from "../server.mjs";
+
+process.env.ROUTER_PROVIDER = "demo";
+process.env.ORCAROUTER_API_KEY = "";
+process.env.STT_PROVIDER = "demo";
+process.env.STT_API_KEY = "";
+process.env.OPENAI_API_KEY = "";
+process.env.MEDIA_PROVIDER = "demo";
+
+const { buildReply, classifyTranscript, createAppServer, replyIsAllowed } = await import("../server.mjs");
 
 let server;
 let baseUrl;

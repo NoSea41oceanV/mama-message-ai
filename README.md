@@ -83,7 +83,9 @@ node server.mjs
 
 ブラウザで `http://127.0.0.1:4173` を開きます。マイク権限を使わずに確認する場合は、画面の「デモ音声で進める」を選択します。
 
-実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。`ROUTER_PROVIDER=orcarouter`、`STT_PROVIDER=openai`を指定してください。
+実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。`ROUTER_PROVIDER=orcarouter`、`STT_PROVIDER=openai`を指定してください。OrcaRouterへの送信は `ROUTER_PROVIDER=orcarouter` のときだけ有効になり、`demo` へ戻すとキーが残っていても外部送信しません。既定のライブ応答上限は `ORCAROUTER_TIMEOUT_SECONDS=25` です。
+
+2026-08-14のライブ確認では、OrcaRouter公式APIの認証に成功し、アプリ経路で `qwen/qwen3.7-plus`、約20.5〜21.5秒、`READY`、LEVEL 3返答まで完走しました。モデル・トークン・レイテンシは実測済みですが、API応答に費用値がなかったためコストは未計測です。
 
 ```powershell
 node --test

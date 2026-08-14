@@ -544,7 +544,7 @@ async function apiHandler(req, res, url) {
     sendJson(res, 200, {
       status: "ok",
       routerMode,
-      routerConfigured: Boolean(process.env.ORCAROUTER_API_KEY),
+      routerConfigured: routerProvider.available,
       sttMode,
       sttConfigured: Boolean(process.env.STT_API_KEY || process.env.OPENAI_API_KEY),
       mediaMode: String(process.env.MEDIA_PROVIDER || "demo").toLowerCase(),

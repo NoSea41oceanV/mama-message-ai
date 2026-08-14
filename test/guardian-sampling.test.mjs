@@ -56,7 +56,7 @@ test("sampling registration rejects MIME spoofing and long voice samples", () =>
     (error) => error.code === "PHOTO_CONTENT_INVALID",
   );
   assert.throws(
-    () => store.register(validRegistration({ voiceDurationSeconds: 31 })),
+    () => store.register(validRegistration({ voiceDurationSeconds: 121 })),
     (error) => error.code === "VOICE_DURATION_INVALID",
   );
   assert.throws(

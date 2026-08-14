@@ -54,8 +54,12 @@ const sampleVoiceLabel = document.querySelector("#sampleVoiceLabel");
 const sampleRecordButton = document.querySelector("#sampleRecordButton");
 const faceConsentCheck = document.querySelector("#faceConsentCheck");
 const voiceConsentCheck = document.querySelector("#voiceConsentCheck");
+const externalVoiceCloningConsentCheck = document.querySelector("#externalVoiceCloningConsentCheck");
 const saveSampleButton = document.querySelector("#saveSampleButton");
 const deleteSampleButton = document.querySelector("#deleteSampleButton");
+const cloneVoicePreviewArea = document.querySelector("#cloneVoicePreviewArea");
+const previewCloneVoiceButton = document.querySelector("#previewCloneVoiceButton");
+const cloneVoicePreview = document.querySelector("#cloneVoicePreview");
 const samplingStatus = document.querySelector("#samplingStatus");
 const sampleVideoBadge = document.querySelector("#sampleVideoBadge");
 const sampleVideoPreview = document.querySelector("#sampleVideoPreview");
@@ -223,14 +227,14 @@ function readAudioDuration(url) {
 }
 
 async function setSampleVoice(blob, knownDurationSeconds = null) {
-  if (!blob || blob.size > 2 * 1024 * 1024) throw new Error("声のサンプルは2MB以下にしてください");
+  if (!blob || blob.size > 8 * 1024 * 1024) throw new Error("声のサンプルは8MB以下にしてください");
   const previewUrl = URL.createObjectURL(blob);
   const durationSeconds = Number.isFinite(knownDurationSeconds)
     ? knownDurationSeconds
     : await readAudioDuration(previewUrl);
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 10.2) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds < 30 || durationSeconds > 120.5) {
     URL.revokeObjectURL(previewUrl);
-    throw new Error("声のサンプルは10秒以内にしてください");
+    throw new Error("本人声クローンには30秒以上、2分以内の録音が必要です");
   }
   state.sampleVoiceBlob = blob;
   state.sampleVoiceDurationSeconds = durationSeconds;
@@ -259,7 +263,7 @@ async function startSampleRecording() {
     state.sampleVoiceRecorder.addEventListener("stop", async () => {
       try {
         const blob = new Blob(state.sampleVoiceChunks, { type: state.sampleVoiceRecorder.mimeType || "audio/webm" });
-        const durationSeconds = Math.min(10, (Date.now() - state.sampleRecordStartedAt) / 1000);
+        const durationSeconds = Math.min(120, (Date.now() - state.sampleRecordStartedAt) / 1000);
         await setSampleVoice(blob, durationSeconds);
       } catch (error) {
         samplingStatus.textContent = error.message;
@@ -270,10 +274,10 @@ async function startSampleRecording() {
     sampleRecordButton.textContent = "録音を止める";
     sampleVoiceLabel.textContent = "録音中 0秒";
     state.sampleRecordTimer = setInterval(() => {
-      const seconds = Math.min(10, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
+      const seconds = Math.min(120, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
       sampleVoiceLabel.textContent = `録音中 ${seconds}秒`;
     }, 250);
-    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, 10000);
+    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, 120000);
   } catch {
     samplingStatus.textContent = "マイクを使えませんでした。音声ファイルを選んでください。";
   }
@@ -365,6 +369,8 @@ function renderSampling(sample) {
   sampleBadge.classList.toggle("is-ready", configured && sample.active);
   guardianLabel.value = sample?.subjectLabel || guardianLabel.value || "ママ";
   deleteSampleButton.disabled = !configured;
+  cloneVoicePreviewArea.hidden = !sample?.voiceCloningAvailable;
+  previewCloneVoiceButton.disabled = !sample?.voiceCloningAvailable;
   if (sample?.posterUrl && !state.samplePhoto) {
     samplePhotoPreview.src = sample.posterUrl;
     samplePhotoPreview.hidden = false;
@@ -398,6 +404,28 @@ async function loadSampling() {
   return sample;
 }
 
+async function previewClonedVoice() {
+  previewCloneVoiceButton.disabled = true;
+  samplingStatus.textContent = "クローン音声を準備しています…";
+  try {
+    const response = await profileFetch("/api/sampling/voice-clone/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.audioUrl) throw new Error("クローン音声を生成できませんでした");
+    cloneVoicePreview.src = result.audioUrl;
+    cloneVoicePreview.hidden = false;
+    await cloneVoicePreview.play();
+    samplingStatus.textContent = "クローン音声を再生しています";
+  } catch (error) {
+    samplingStatus.textContent = error.message;
+  } finally {
+    previewCloneVoiceButton.disabled = !state.sample?.voiceCloningAvailable;
+  }
+}
+
 async function refreshConsent() {
   const response = await profileFetch("/api/consent");
   if (!response.ok) throw new Error("同意情報を確認できませんでした");
@@ -412,6 +440,10 @@ async function saveSampling() {
   }
   if (!faceConsentCheck.checked || !voiceConsentCheck.checked) {
     samplingStatus.textContent = "顔写真と声、それぞれの利用同意を確認してください。";
+    return;
+  }
+  if (!externalVoiceCloningConsentCheck.checked) {
+    samplingStatus.textContent = "ElevenLabsへの外部送信と本人声クローン作成への同意を確認してください";
     return;
   }
   const subjectLabel = guardianLabel.value.trim();
@@ -434,6 +466,8 @@ async function saveSampling() {
         voiceDurationSeconds: state.sampleVoiceDurationSeconds,
         faceApproved: true,
         voiceApproved: true,
+        createElevenLabsVoiceClone: true,
+        externalVoiceCloningApproved: true,
       }),
     });
     const data = await response.json();
@@ -1014,6 +1048,7 @@ sampleRecordButton.addEventListener("click", () => {
 saveSampleButton.addEventListener("click", saveSampling);
 deleteSampleButton.addEventListener("click", deleteSampling);
 generateVideoButton.addEventListener("click", generateSamplingVideo);
+previewCloneVoiceButton.addEventListener("click", previewClonedVoice);
 startSetup.addEventListener("click", () => showScreen("record"));
 recordButton.addEventListener("click", () => state.mediaRecorder?.state === "recording" ? stopRecording() : startRecording());
 demoAudioButton.addEventListener("click", () => transcribe({ useDemo: true }));

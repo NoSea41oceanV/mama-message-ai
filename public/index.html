@@ -168,9 +168,18 @@
           <input id="voiceConsentCheck" type="checkbox">
           <span>声をAIメッセージ作成に使うことに同意します</span>
         </label>
+        <label class="check-row sample-consent">
+          <input id="externalVoiceCloningConsentCheck" type="checkbox">
+          <span>本人の声をElevenLabsへ送信し、本人声クローンを作成・利用することに同意します</span>
+        </label>
+        <p class="sample-note">本人声クローンには、静かな場所で30秒〜2分（推奨1〜2分）録音してください。</p>
         <div class="action-row sample-actions">
           <button class="primary-button" id="saveSampleButton" type="button">素材を登録</button>
           <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
+        </div>
+        <div class="action-row sample-actions" id="cloneVoicePreviewArea" hidden>
+          <button class="secondary-button" id="previewCloneVoiceButton" type="button">クローン音声を確認</button>
+          <audio id="cloneVoicePreview" controls preload="none" hidden></audio>
         </div>
         <p class="sample-note">登録素材はこのブラウザの保護者プロフィールに紐づけて暗号化保存されます。別のプロフィールからは参照できません。</p>
         <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">

@@ -17,6 +17,8 @@ import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
+import { createOpenAICustomVoiceService } from "./lib/providers/openai-custom-voice.mjs";
+import { createElevenLabsVoiceService } from "./lib/providers/elevenlabs-voice.mjs";
 
 async function loadLocalEnvironment() {
   try {
@@ -48,6 +50,9 @@ const conversationTtlMs = (Number.isFinite(configuredConversationTtlMinutes)
 const MAX_CONVERSATION_TURNS = 6;
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
+const speechMode = String(process.env.SPEECH_PROVIDER || "disabled").toLowerCase();
+const customVoiceProfileId = String(process.env.OPENAI_CUSTOM_VOICE_PROFILE_ID || "").trim().toLowerCase();
+const elevenLabsVoiceProfileId = String(process.env.ELEVENLABS_VOICE_PROFILE_ID || "").trim().toLowerCase();
 const guardianSampling = createPersistentGuardianSamplingStore({
   directory: fileURLToPath(new URL("./.data/guardian-samples/", import.meta.url)),
 });
@@ -68,6 +73,24 @@ const guardianVideoService = createGuardianVideoService({
   maximumBytes: Number(process.env.VIDEO_MAX_BYTES || process.env.KLING_VIDEO_MAX_BYTES || 25 * 1024 * 1024),
   downloadTimeoutMs: Number(process.env.VIDEO_DOWNLOAD_TIMEOUT_SECONDS || process.env.KLING_VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
 });
+const customVoiceService = createOpenAICustomVoiceService();
+const elevenLabsVoiceService = createElevenLabsVoiceService();
+
+function configuredSpeechService(runtime = {}) {
+  if (speechMode === "elevenlabs") {
+    return {
+      service: runtime.elevenLabsVoiceService ?? elevenLabsVoiceService,
+      profileId: elevenLabsVoiceProfileId,
+    };
+  }
+  if (speechMode === "openai-custom-voice") {
+    return {
+      service: runtime.customVoiceService ?? customVoiceService,
+      profileId: customVoiceProfileId,
+    };
+  }
+  return { service: null, profileId: "" };
+}
 const guardianSamplingRecordingText = "お話ししてくれてありがとう。いつも応援しているよ。";
 const demoConsentByProfile = new Map();
 
@@ -147,7 +170,7 @@ function samplingApiView(status) {
     consentId: status.consentId ?? null,
     avatarAssetId: status.avatarAssetId ?? null,
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
-    voiceCloningAvailable: false,
+    voiceCloningAvailable: status.voiceCloningAvailable === true,
     videoGeneration: status.videoGeneration ?? { status: "not_started" },
   };
 }
@@ -302,7 +325,8 @@ const storedGeneratedVideoProvider = Object.freeze({
   generate: async (context) => context.generatedVideoUrl ? {
     videoUrl: context.generatedVideoUrl,
     audioInVideo: false,
-    speechSynthesis: true,
+    audioUrl: context.replyAudioUrl ?? null,
+    speechSynthesis: !context.replyAudioUrl,
   } : null,
 });
 const mediaProvider = createMediaProvider({
@@ -526,23 +550,45 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       : routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
       ? "generated_video_failure"
       : "video_failure";
+    let replyAudio = null;
+    const configuredSpeech = configuredSpeechService(runtime);
+    const storedVoiceClone = input.guardianProfileId ? guardianSampling.voiceClone(input.guardianProfileId) : null;
+    const speechProfileMatches = speechMode === "elevenlabs" && storedVoiceClone
+      ? storedVoiceClone.provider === "elevenlabs"
+      : configuredSpeech.profileId === input.guardianProfileId;
+    if (registeredSample
+      && configuredSpeech.service?.available
+      && speechProfileMatches) {
+      try {
+        replyAudio = await configuredSpeech.service.synthesize({
+          text: decision.replyText,
+          voiceId: storedVoiceClone?.voiceId,
+          safetyLevel: decision.safetyLevel,
+          consentValid: true,
+        });
+      } catch {
+        // Voice synthesis is optional; keep the existing no-cost browser speech fallback.
+      }
+    }
     responseBundle = await mediaProvider.generate({
       decision,
       replyText: decision.replyText,
       consentValid: true,
       faultMode: input.demoFault || defaultFault,
       generatedVideoUrl,
+      replyAudioUrl: replyAudio?.audioUrl,
       posterUrl: registeredSample?.photoUrl,
-      audioUrl: registeredSample?.voicePreviewUrl,
-      recordedAudioText: registeredSample ? guardianSamplingRecordingText : null,
+      audioUrl: replyAudio?.audioUrl ?? registeredSample?.voicePreviewUrl,
+      recordedAudioText: replyAudio ? decision.replyText : registeredSample ? guardianSamplingRecordingText : null,
       guardianSampling: registeredSample ? {
         configured: true,
         photoUsed: true,
         voiceSampleRegistered: true,
-        voiceSamplePurpose: "sampling-confirmation",
-        voiceUsed: false,
-        voiceCloningUsed: false,
-        voiceFallback: "dynamic-tts",
+        voiceSamplePurpose: replyAudio ? "custom-voice-source" : "sampling-confirmation",
+        voiceUsed: Boolean(replyAudio),
+        voiceCloningUsed: Boolean(replyAudio),
+        voiceProvider: replyAudio?.provider ?? null,
+        voiceFallback: replyAudio ? null : "dynamic-tts",
       } : null,
     });
   } catch (error) {
@@ -598,6 +644,19 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
 async function apiHandler(req, res, url, runtime = {}) {
   purgeExpiredData();
   const videoService = runtime.videoService ?? guardianVideoService;
+  const voiceService = configuredSpeechService(runtime).service;
+  const replyAudioMatch = url.pathname.match(/^\/api\/reply-audio\/([^/]+)$/);
+  if (req.method === "GET" && replyAudioMatch) {
+    let token;
+    try { token = decodeURIComponent(replyAudioMatch[1]); } catch { token = ""; }
+    const audio = voiceService?.read(token)
+      ?? elevenLabsVoiceService.read(token)
+      ?? customVoiceService.read(token)
+      ?? null;
+    if (!audio) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendPrivateMedia(res, audio);
+    return true;
+  }
   const samplingAssetMatch = url.pathname.match(/^\/api\/sampling\/assets\/(photo|voice|video)\/([^/]+)$/);
   if (req.method === "GET" && samplingAssetMatch) {
     let accessToken;
@@ -648,6 +707,36 @@ async function apiHandler(req, res, url, runtime = {}) {
     }
     return true;
   }
+  if (req.method === "POST" && url.pathname === "/api/sampling/voice-clone/preview") {
+    const profileId = readGuardianProfileId(req);
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    const status = guardianSampling.status(profileId);
+    const clone = guardianSampling.voiceClone(profileId);
+    if (!status.configured || !status.active || clone?.provider !== "elevenlabs") {
+      sendJson(res, 404, { error: "VOICE_CLONE_NOT_FOUND" });
+      return true;
+    }
+    try {
+      const preview = await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).synthesize({
+        voiceId: clone.voiceId,
+        text: "お話ししてくれてありがとう。いつでも応援しているよ。",
+        safetyLevel: "normal",
+        consentValid: true,
+      });
+      if (!preview) sendJson(res, 502, { error: "VOICE_CLONE_PREVIEW_FAILED" });
+      else sendJson(res, 200, { audioUrl: preview.audioUrl, cached: preview.cacheHit });
+    } catch {
+      sendJson(res, 502, { error: "VOICE_CLONE_PREVIEW_FAILED" });
+    }
+    return true;
+  }
   const samplingVideoMatch = url.pathname.match(/^\/api\/sampling\/video\/([^/]+)$/);
   if (req.method === "GET" && samplingVideoMatch) {
     const profileId = readGuardianProfileId(req);
@@ -677,7 +766,10 @@ async function apiHandler(req, res, url, runtime = {}) {
       return true;
     }
     if (req.method === "GET") {
-      sendJson(res, 200, samplingApiView(guardianSampling.status(profileId)));
+      sendJson(res, 200, samplingApiView({
+        ...guardianSampling.status(profileId),
+        voiceCloningAvailable: Boolean(guardianSampling.voiceClone(profileId)),
+      }));
       return true;
     }
     if (req.method === "POST") {
@@ -691,7 +783,39 @@ async function apiHandler(req, res, url, runtime = {}) {
       }
       try {
         const input = await readJson(req, 10 * 1024 * 1024);
-        sendJson(res, 201, samplingApiView(guardianSampling.register(profileId, input)));
+        if (input.createElevenLabsVoiceClone === true) {
+          if (input.externalVoiceCloningApproved !== true) {
+            sendJson(res, 422, { error: "EXTERNAL_VOICE_CLONING_CONSENT_REQUIRED" });
+            return true;
+          }
+          if (Number(input.voiceDurationSeconds) < 30) {
+            sendJson(res, 422, { error: "VOICE_CLONE_SAMPLE_TOO_SHORT" });
+            return true;
+          }
+        }
+        const previousClone = guardianSampling.voiceClone(profileId);
+        if (previousClone?.provider === "elevenlabs") {
+          await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).deleteClone(previousClone.voiceId);
+        }
+        const registered = guardianSampling.register(profileId, input);
+        if (input.createElevenLabsVoiceClone === true) {
+          const resolved = guardianSampling.resolve(profileId, registered.consentId, registered.avatarAssetId);
+          const clone = await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).createClone({
+            bytes: resolved.voice.bytes,
+            mimeType: resolved.voice.mimeType,
+            name: `${registered.subjectLabel || "Guardian"} - おへんじ`,
+            externalProcessingApproved: true,
+          });
+          if (!clone) {
+            sendJson(res, 502, { error: "ELEVENLABS_VOICE_CLONE_FAILED" });
+            return true;
+          }
+          guardianSampling.storeVoiceClone(profileId, clone);
+        }
+        sendJson(res, 201, samplingApiView({
+          ...guardianSampling.status(profileId),
+          voiceCloningAvailable: Boolean(guardianSampling.voiceClone(profileId)),
+        }));
       } catch (error) {
         const statusCode = error.message === "PAYLOAD_TOO_LARGE"
           ? 413
@@ -707,6 +831,10 @@ async function apiHandler(req, res, url, runtime = {}) {
         sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
         return true;
       }
+      const previousClone = guardianSampling.voiceClone(profileId);
+      if (previousClone?.provider === "elevenlabs") {
+        await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).deleteClone(previousClone.voiceId);
+      }
       const result = guardianSampling.delete(profileId);
       sendJson(res, 200, { ...samplingApiView(result), deleted: result.deleted });
       return true;
@@ -719,6 +847,12 @@ async function apiHandler(req, res, url, runtime = {}) {
       routerConfigured: routerProvider.available,
       sttMode,
       sttConfigured: Boolean(process.env.STT_API_KEY || process.env.OPENAI_API_KEY),
+      speechMode,
+      customVoiceConfigured: customVoiceService.available
+        && GUARDIAN_PROFILE_ID_PATTERN.test(customVoiceProfileId),
+      elevenLabsConfigured: elevenLabsVoiceService.available
+        && GUARDIAN_PROFILE_ID_PATTERN.test(elevenLabsVoiceProfileId),
+      elevenLabsCloningApiConfigured: elevenLabsVoiceService.available,
       mediaMode: String(process.env.MEDIA_PROVIDER || "demo").toLowerCase(),
       preRecordedVideoConfigured: Boolean(process.env.PREGENERATED_VIDEO_URL),
       videoGenerationMode,
@@ -916,7 +1050,11 @@ async function serveStatic(res, pathname) {
 }
 
 export function createAppServer(options = {}) {
-  const runtime = { videoService: options.videoService ?? guardianVideoService };
+  const runtime = {
+    videoService: options.videoService ?? guardianVideoService,
+    customVoiceService: options.customVoiceService ?? customVoiceService,
+    elevenLabsVoiceService: options.elevenLabsVoiceService ?? elevenLabsVoiceService,
+  };
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname.startsWith("/api/")) {

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おへんじ</title>
-    <link rel="stylesheet" href="/styles.css?v=23">
+    <link rel="stylesheet" href="/styles.css?v=24">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -184,8 +184,8 @@
           <div class="sample-picker voice-picker">
             <span class="sample-icon" aria-hidden="true">声</span>
             <strong>声のサンプル</strong>
-            <span id="sampleVoiceLabel">30秒まで録音</span>
-            <small class="sample-phrase">下の文章を自然な声で、ゆっくり読んでください。</small>
+            <span id="sampleVoiceLabel">1〜2分がおすすめ</span>
+            <small class="sample-phrase">普段その子に話す声・間・抑揚で、下の文章を読んでください。</small>
             <button class="secondary-button compact" id="sampleRecordButton" type="button">録音する</button>
             <label class="file-link" for="sampleVoiceInput">音声を選ぶ</label>
             <input id="sampleVoiceInput" type="file" accept="audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4">
@@ -193,8 +193,8 @@
           </div>
         </div>
         <details class="sample-script" open>
-          <summary>30秒の読み上げ文</summary>
-          <p>「お話ししてくれてありがとう。いつも応援しているよ。うれしかったことも、悲しかったことも、ゆっくり聞かせてね。うまくできない日があっても大丈夫。少し休んでから、また一緒にやってみよう。今日あったことを、はじめから教えてくれる？あなたのお話を聞けるのを、楽しみにしているよ。」</p>
+          <summary>1〜2分の読み上げ文</summary>
+          <p>「お話ししてくれてありがとう。いつも応援しているよ。うれしかったことも、悲しかったことも、ゆっくり聞かせてね。うまくできない日があっても大丈夫。少し休んでから、また一緒にやってみよう。今日あったことを、はじめから教えてくれる？あなたのお話を聞けるのを、楽しみにしているよ。大好きな遊びのお話も聞きたいな。どんなところがいちばん楽しかった？そうなんだ、よく教えてくれたね。お迎えを待つ時間が長く感じるときもあるよね。いま一緒にいる人のそばで、できそうなことをひとつ選んでみようか。絵本を読むのと、おもちゃで遊ぶの、どちらがいいかな。急がなくて大丈夫だよ。あなたのペースでお話ししてね。会えたときに、今日のお話をたくさん聞かせてね。」</p>
         </details>
         <label class="check-row sample-consent">
           <input id="faceConsentCheck" type="checkbox">
@@ -240,6 +240,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=25"></script>
+    <script type="module" src="/app.js?v=26"></script>
   </body>
 </html>

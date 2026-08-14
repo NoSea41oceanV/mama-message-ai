@@ -77,6 +77,7 @@ const generateVideoButton = document.querySelector("#generateVideoButton");
 const videoGenerationStatus = document.querySelector("#videoGenerationStatus");
 
 const guardianProfileStorageKey = "guardian-ai.profile-id.v1";
+const maxVoiceSampleSeconds = 120;
 let guardianProfileId;
 
 function getGuardianProfileId() {
@@ -252,9 +253,9 @@ async function setSampleVoice(blob, knownDurationSeconds = null) {
   const durationSeconds = Number.isFinite(knownDurationSeconds)
     ? knownDurationSeconds
     : await readAudioDuration(previewUrl);
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 30.5) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > maxVoiceSampleSeconds + 0.5) {
     URL.revokeObjectURL(previewUrl);
-    throw new Error("声のサンプルは30秒以内にしてください");
+    throw new Error("声のサンプルは2分以内にしてください");
   }
   state.sampleVoiceBlob = blob;
   state.sampleVoiceDurationSeconds = durationSeconds;
@@ -283,7 +284,7 @@ async function startSampleRecording() {
     state.sampleVoiceRecorder.addEventListener("stop", async () => {
       try {
         const blob = new Blob(state.sampleVoiceChunks, { type: state.sampleVoiceRecorder.mimeType || "audio/webm" });
-        const durationSeconds = Math.min(30, (Date.now() - state.sampleRecordStartedAt) / 1000);
+        const durationSeconds = Math.min(maxVoiceSampleSeconds, (Date.now() - state.sampleRecordStartedAt) / 1000);
         await setSampleVoice(blob, durationSeconds);
       } catch (error) {
         samplingStatus.textContent = error.message;
@@ -294,10 +295,10 @@ async function startSampleRecording() {
     sampleRecordButton.textContent = "録音を止める";
     sampleVoiceLabel.textContent = "録音中 0秒";
     state.sampleRecordTimer = setInterval(() => {
-      const seconds = Math.min(30, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
+      const seconds = Math.min(maxVoiceSampleSeconds, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
       sampleVoiceLabel.textContent = `録音中 ${seconds}秒`;
     }, 250);
-    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, 30000);
+    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, maxVoiceSampleSeconds * 1000);
   } catch {
     samplingStatus.textContent = "マイクを使えませんでした。音声ファイルを選んでください。";
   }
@@ -412,7 +413,7 @@ function renderSampling(sample) {
       : "登録済み・クローン未作成";
   } else if (!state.sampleVoiceBlob) {
     sampleVoicePreview.hidden = true;
-    sampleVoiceLabel.textContent = "30秒まで録音";
+    sampleVoiceLabel.textContent = "1〜2分がおすすめ";
   }
   faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
   voiceConsentCheck.checked = Boolean(

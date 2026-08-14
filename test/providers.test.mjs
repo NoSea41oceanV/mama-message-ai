@@ -79,6 +79,10 @@ test("ElevenLabs clones a sample and synthesizes Japanese reply audio", async ()
   assert.match(requests[1].url, /text-to-speech\/voice-test-123/);
   const speechBody = JSON.parse(requests[1].init.body);
   assert.equal(speechBody.language_code, "ja");
+  assert.equal(speechBody.voice_settings.stability, 0.45);
+  assert.equal(speechBody.voice_settings.similarity_boost, 0.85);
+  assert.equal(speechBody.voice_settings.style, 0.2);
+  assert.equal(speechBody.voice_settings.use_speaker_boost, true);
   assert.equal(speechBody.voice_settings.speed, 0.7);
   assert.equal(audio.mimeType, "audio/mpeg");
   assert.match(audio.bytes.toString(), /^ID3/);

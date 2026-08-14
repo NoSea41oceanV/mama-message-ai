@@ -104,7 +104,7 @@ test("voice-only replacement preserves the guardian photo and consent identifier
   const updated = store.replaceVoice({
     voiceBase64: wav.toString("base64"),
     voiceType: "audio/wav",
-    voiceDurationSeconds: 30,
+    voiceDurationSeconds: 120,
     voiceApproved: true,
   }, {
     voiceClone: { provider: "elevenlabs", voiceId: "voice-new" },
@@ -113,7 +113,7 @@ test("voice-only replacement preserves the guardian photo and consent identifier
   assert.equal(updated.consentId, first.consentId);
   assert.equal(updated.avatarAssetId, first.avatarAssetId);
   assert.equal(after.photo, before.photo);
-  assert.equal(after.voice.durationSeconds, 30);
+  assert.equal(after.voice.durationSeconds, 120);
   assert.equal(after.voiceClone.voiceId, "voice-new");
   assert.equal(previousVoice.every((byte) => byte === 0), true);
 });
@@ -125,7 +125,7 @@ test("sampling registration rejects MIME spoofing and long voice samples", () =>
     (error) => error.code === "PHOTO_CONTENT_INVALID",
   );
   assert.throws(
-    () => store.register(validRegistration({ voiceDurationSeconds: 31 })),
+    () => store.register(validRegistration({ voiceDurationSeconds: 121 })),
     (error) => error.code === "VOICE_DURATION_INVALID",
   );
   assert.throws(

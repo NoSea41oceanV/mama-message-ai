@@ -399,11 +399,6 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .guardian-live-badge i { width: 9px; height: 9px; border-radius: 50%; background: var(--coral); }
 .media-stage.is-speaking .guardian-live-badge { opacity: 1; transform: translateY(0); }
 .media-stage.is-speaking .guardian-live-badge i { animation: live-pulse .7s ease-in-out infinite alternate; }
-.media-stage.is-speaking > video:not([hidden]) {
-  animation: guardian-video-alive 4.2s ease-in-out infinite alternate;
-  transform-origin: 50% 58%;
-  will-change: transform;
-}
 .subtitle {
   position: relative;
   width: min(100%, 340px);
@@ -548,11 +543,6 @@ dialog .secondary-button { box-shadow: none; }
   to { transform: translateY(10px) scaleY(1.42); }
 }
 @keyframes live-pulse { to { transform: scale(1.45); opacity: .5; } }
-@keyframes guardian-video-alive {
-  0% { transform: translate3d(-1.5%, -1%, 0) scale(1.045) rotate(-.25deg); }
-  52% { transform: translate3d(1%, .6%, 0) scale(1.075) rotate(.15deg); }
-  100% { transform: translate3d(-.5%, 1.2%, 0) scale(1.06) rotate(.3deg); }
-}
 
 @media (min-width: 760px) {
   body { padding: 24px; }

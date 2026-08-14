@@ -70,6 +70,7 @@ try {
   const page = await context.newPage();
   const video = page.video();
   await page.goto(appUrl, { waitUntil: "networkidle" });
+  await page.locator("#childModeButton").click();
   await page.locator("#startSetup").waitFor({ state: "visible" });
   await page.locator("#startSetup").waitFor({ state: "attached" });
   await pause(page, 3_000);

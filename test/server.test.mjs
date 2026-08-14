@@ -76,7 +76,7 @@ async function createAndWait(overrides = {}, guardianProfileId = null) {
 }
 
 before(async () => {
-  server = createAppServer();
+  server = createAppServer({ guardianViewAccessCode: "2468" });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
@@ -100,6 +100,62 @@ test("health endpoint exposes modes without secrets", async () => {
   assert.equal(typeof health.routerConfigured, "boolean");
   assert.equal(typeof health.sttConfigured, "boolean");
   assert.equal("apiKey" in health, false);
+});
+
+test("guardian conversation view requires the matching family ID and adult code", async () => {
+  const profileId = "22222222-2222-4222-8222-222222222222";
+  const conversationId = `guardian-view-${crypto.randomUUID()}`;
+  const completed = await createAndWait({ conversationId }, profileId);
+  assert.equal(completed.result.status, "READY");
+
+  const unauthorized = await fetch(`${baseUrl}/api/guardian/conversations`, {
+    headers: {
+      "x-guardian-profile-id": profileId,
+      "x-guardian-access-code": "wrong",
+    },
+  });
+  assert.equal(unauthorized.status, 401);
+
+  const response = await fetch(`${baseUrl}/api/guardian/conversations`, {
+    headers: {
+      "x-guardian-profile-id": profileId,
+      "x-guardian-access-code": "2468",
+    },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(body.guardianProfileId, profileId);
+  assert.equal(body.conversations[0].conversationId, conversationId);
+  assert.equal(body.conversations[0].turns[0].childMessage, completed.input.confirmedTranscript);
+  assert.equal(typeof body.conversations[0].turns[0].guardianReply, "string");
+
+  const otherProfile = await fetch(`${baseUrl}/api/guardian/conversations`, {
+    headers: {
+      "x-guardian-profile-id": "33333333-3333-4333-8333-333333333333",
+      "x-guardian-access-code": "2468",
+    },
+  });
+  assert.deepEqual((await otherProfile.json()).conversations, []);
+});
+
+test("guardian conversation view records safety handoffs without generating guardian media", async () => {
+  const profileId = "44444444-4444-4444-8444-444444444444";
+  const completed = await createAndWait({
+    conversationId: `safety-view-${crypto.randomUUID()}`,
+    confirmedTranscript: "知らない人がいて怖い、助けて",
+  }, profileId);
+  assert.equal(completed.result.status, "ADULT_HANDOFF");
+
+  const response = await fetch(`${baseUrl}/api/guardian/conversations`, {
+    headers: {
+      "x-guardian-profile-id": profileId,
+      "x-guardian-access-code": "2468",
+    },
+  });
+  const body = await response.json();
+  assert.equal(body.conversations[0].turns[0].childMessage, "知らない人がいて怖い、助けて");
+  assert.match(body.conversations[0].turns[0].guardianReply, /大人|確認|話/);
 });
 
 test("routes urgent language to an adult without avatar output", () => {

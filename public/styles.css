@@ -164,6 +164,37 @@ h3 { margin: 26px 0 10px; font-size: 17px; }
 }
 .section-label { margin-bottom: 5px; color: var(--sky-deep); font-size: 13px; font-weight: 900; }
 
+.entry-screen { justify-content: center; }
+.entry-mascot { align-self: center; width: 112px; height: 112px; margin-bottom: 8px; }
+.entry-screen > .section-label { text-align: center; }
+.mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mode-card { display: flex; flex-direction: column; align-items: center; min-height: 170px; padding: 18px 12px; border: 3px solid var(--white); border-radius: 24px; color: var(--ink-strong); box-shadow: 0 7px 0 rgb(8 47 85 / 18%); }
+.mode-card.child-mode { background: var(--sun); }
+.mode-card.guardian-mode { background: var(--mint-soft); }
+.mode-card strong { margin: 10px 0 7px; font-size: 17px; }
+.mode-card small { color: var(--ink); font-size: 12px; font-weight: 700; line-height: 1.55; }
+.mode-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--white); font-size: 22px; font-weight: 900; }
+.guardian-login-screen, .guardian-chat-screen { background: #f4fbfe; }
+.guardian-login-card { display: grid; gap: 9px; padding: 20px; border: 2px solid var(--rule); border-radius: 20px; background: var(--white); box-shadow: var(--shadow); }
+.guardian-login-card .primary-button { margin-top: 12px; }
+.privacy-note { margin: 16px 4px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.family-share-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: -8px 0 14px; padding: 10px 12px; border-radius: 14px; background: rgb(255 255 255 / 88%); }
+.family-share-card div { min-width: 0; }
+.family-share-card span { display: block; color: var(--muted); font-size: 10px; font-weight: 900; }
+.family-share-card code, .family-id-line code { display: block; overflow: hidden; color: var(--ink-strong); font-family: ui-monospace, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.family-share-card .text-button { flex: 0 0 auto; margin: 0; font-size: 11px; }
+.guardian-chat-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.guardian-chat-heading h1 { margin: 0; text-align: left; }
+.family-id-line { margin: 10px 0; color: var(--muted); font-size: 11px; }
+.chat-list { flex: 1; min-height: 220px; padding: 14px; overflow-y: auto; border: 2px solid var(--rule); border-radius: 20px; background: var(--white); }
+.chat-group + .chat-group { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.chat-time { margin: 0 0 8px; color: var(--muted); font-size: 10px; text-align: center; }
+.chat-bubble { width: fit-content; max-width: 86%; margin: 8px 0; padding: 11px 14px; border-radius: 18px; font-size: 14px; font-weight: 700; line-height: 1.55; overflow-wrap: anywhere; }
+.child-bubble { margin-left: auto; border-bottom-right-radius: 5px; background: var(--sky-soft); }
+.reply-bubble { margin-right: auto; border-bottom-left-radius: 5px; background: var(--mint-soft); }
+.reply-bubble::before { content: "おへんじ\A"; white-space: pre; color: #167a68; font-size: 10px; font-weight: 900; }
+.chat-empty { padding: 36px 16px; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
+
 .mascot {
   display: block;
   object-fit: contain;

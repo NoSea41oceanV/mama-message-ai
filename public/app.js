@@ -66,6 +66,18 @@ const sampleVideoPreview = document.querySelector("#sampleVideoPreview");
 const videoConsentCheck = document.querySelector("#videoConsentCheck");
 const generateVideoButton = document.querySelector("#generateVideoButton");
 const videoGenerationStatus = document.querySelector("#videoGenerationStatus");
+const childModeButton = document.querySelector("#childModeButton");
+const guardianModeButton = document.querySelector("#guardianModeButton");
+const guardianLoginForm = document.querySelector("#guardianLoginForm");
+const guardianViewProfileId = document.querySelector("#guardianViewProfileId");
+const guardianViewAccessCode = document.querySelector("#guardianViewAccessCode");
+const guardianLoginError = document.querySelector("#guardianLoginError");
+const guardianChatProfileId = document.querySelector("#guardianChatProfileId");
+const guardianChatList = document.querySelector("#guardianChatList");
+const guardianRetentionNote = document.querySelector("#guardianRetentionNote");
+const refreshGuardianChat = document.querySelector("#refreshGuardianChat");
+const childFamilyId = document.querySelector("#childFamilyId");
+const copyFamilyIdButton = document.querySelector("#copyFamilyIdButton");
 
 const guardianProfileStorageKey = "guardian-ai.profile-id.v1";
 let guardianProfileId;
@@ -93,7 +105,7 @@ function profileFetch(url, options = {}) {
 }
 
 const state = {
-  screen: "setup",
+  screen: "entry",
   sessionId: crypto.randomUUID(),
   conversationId: crypto.randomUUID(),
   consent: null,
@@ -126,6 +138,8 @@ const state = {
   responseAnalyser: null,
   portraitAnimationFrame: null,
   responseUtterance: null,
+  guardianViewProfileId: null,
+  guardianViewAccessCode: null,
 };
 
 for (let index = 0; index < 27; index += 1) {
@@ -137,8 +151,72 @@ function showScreen(name) {
   if (state.screen === "response" && name !== "response") stopSpeech();
   state.screen = name;
   screens.forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === name));
-  backButton.disabled = ["setup", "waiting"].includes(name);
+  backButton.disabled = ["entry", "waiting"].includes(name);
   document.querySelector(`[data-screen="${name}"] h1`)?.focus?.();
+}
+
+function displayFamilyId(profileId) {
+  return profileId;
+}
+
+function formatConversationTime(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "" : new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function renderGuardianConversations(data) {
+  guardianChatList.replaceChildren();
+  guardianChatProfileId.textContent = displayFamilyId(data.guardianProfileId);
+  guardianRetentionNote.textContent = `会話は最終更新から約${data.retentionMinutes}分で自動的に消えます。`;
+  if (!data.conversations.length) {
+    const empty = document.createElement("div");
+    empty.className = "chat-empty";
+    empty.textContent = "まだ届いたお話はありません。子ども側で会話すると、ここに表示されます。";
+    guardianChatList.append(empty);
+    return;
+  }
+  for (const conversation of [...data.conversations].reverse()) {
+    const group = document.createElement("section");
+    group.className = "chat-group";
+    const time = document.createElement("p");
+    time.className = "chat-time";
+    time.textContent = formatConversationTime(conversation.updatedAt);
+    group.append(time);
+    for (const turn of conversation.turns) {
+      const childBubble = document.createElement("div");
+      childBubble.className = "chat-bubble child-bubble";
+      childBubble.textContent = turn.childMessage;
+      const replyBubble = document.createElement("div");
+      replyBubble.className = "chat-bubble reply-bubble";
+      replyBubble.textContent = turn.guardianReply;
+      group.append(childBubble, replyBubble);
+    }
+    guardianChatList.append(group);
+  }
+  guardianChatList.scrollTop = guardianChatList.scrollHeight;
+}
+
+async function loadGuardianConversations() {
+  refreshGuardianChat.disabled = true;
+  try {
+    const response = await fetch("/api/guardian/conversations", {
+      headers: {
+        "x-guardian-profile-id": state.guardianViewProfileId,
+        "x-guardian-access-code": state.guardianViewAccessCode,
+      },
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      if (response.status === 401) throw new Error("確認コードが違います。");
+      if (response.status === 503) throw new Error("大人確認用の設定がまだ完了していません。");
+      throw new Error("家庭IDを確認してください。");
+    }
+    renderGuardianConversations(data);
+    showScreen("guardian-chat");
+  } finally {
+    refreshGuardianChat.disabled = false;
+  }
 }
 
 function setRecordState(active) {
@@ -1050,6 +1128,35 @@ deleteSampleButton.addEventListener("click", deleteSampling);
 generateVideoButton.addEventListener("click", generateSamplingVideo);
 previewCloneVoiceButton.addEventListener("click", previewClonedVoice);
 startSetup.addEventListener("click", () => showScreen("record"));
+childModeButton.addEventListener("click", () => {
+  childFamilyId.textContent = displayFamilyId(getGuardianProfileId());
+  showScreen("setup");
+});
+guardianModeButton.addEventListener("click", () => {
+  guardianViewProfileId.value = getGuardianProfileId();
+  guardianLoginError.textContent = "";
+  showScreen("guardian-login");
+});
+copyFamilyIdButton.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(getGuardianProfileId());
+    copyFamilyIdButton.textContent = "コピーしました";
+    setTimeout(() => { copyFamilyIdButton.textContent = "IDをコピー"; }, 1800);
+  } catch {
+    copyFamilyIdButton.textContent = "コピーできませんでした";
+  }
+});
+guardianLoginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  guardianLoginError.textContent = "";
+  state.guardianViewProfileId = guardianViewProfileId.value.trim().toLowerCase();
+  state.guardianViewAccessCode = guardianViewAccessCode.value.trim();
+  try { await loadGuardianConversations(); }
+  catch (error) { guardianLoginError.textContent = error.message; }
+});
+refreshGuardianChat.addEventListener("click", () => {
+  loadGuardianConversations().catch((error) => { guardianRetentionNote.textContent = error.message; });
+});
 recordButton.addEventListener("click", () => state.mediaRecorder?.state === "recording" ? stopRecording() : startRecording());
 demoAudioButton.addEventListener("click", () => transcribe({ useDemo: true }));
 retryButton.addEventListener("click", () => showScreen("record"));
@@ -1066,7 +1173,9 @@ revokeConsent.addEventListener("click", () => updateConsent("revoke").catch((err
 restoreConsent.addEventListener("click", () => updateConsent("restore").catch((error) => { consentAdminStatus.textContent = error.message; }));
 backButton.addEventListener("click", () => {
   stopSpeech();
-  if (state.screen === "record") showScreen("setup");
+  if (["setup", "guardian-login"].includes(state.screen)) showScreen("entry");
+  else if (state.screen === "guardian-chat") showScreen("guardian-login");
+  else if (state.screen === "record") showScreen("setup");
   else if (state.screen === "transcript") showScreen("record");
   else resetFlow();
 });

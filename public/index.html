@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おへんじ</title>
-    <link rel="stylesheet" href="/styles.css?v=23">
+    <link rel="stylesheet" href="/styles.css?v=24">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -19,7 +19,51 @@
         <button class="icon-button adult-button" id="adultButton" type="button" aria-label="大人向け情報を開く" title="大人向け設定"><span aria-hidden="true">⚙</span></button>
       </header>
 
-      <section class="screen is-active" data-screen="setup" aria-labelledby="setupTitle">
+      <section class="screen entry-screen is-active" data-screen="entry" aria-labelledby="entryTitle">
+        <img class="mascot entry-mascot" src="/assets/messenger-mascot.png" alt="">
+        <p class="section-label">使い方をえらぶ</p>
+        <h1 id="entryTitle">今日はどちらで<br>使いますか？</h1>
+        <p class="lead">同じ家庭IDで、子どものお話を離れた大人にも届けられます。</p>
+        <div class="mode-grid">
+          <button class="mode-card child-mode" id="childModeButton" type="button">
+            <span class="mode-icon" aria-hidden="true">♪</span>
+            <strong>子どもと使う</strong>
+            <small>声でお話しして、おへんじを聞く</small>
+          </button>
+          <button class="mode-card guardian-mode" id="guardianModeButton" type="button">
+            <span class="mode-icon" aria-hidden="true">✓</span>
+            <strong>大人が確認する</strong>
+            <small>離れた場所から会話を確認する</small>
+          </button>
+        </div>
+      </section>
+
+      <section class="screen guardian-login-screen" data-screen="guardian-login" aria-labelledby="guardianLoginTitle">
+        <p class="section-label">大人確認用</p>
+        <h1 id="guardianLoginTitle">家庭の会話を<br>確認する</h1>
+        <p class="lead">子ども側と同じ家庭IDと、大人用確認コードを入力してください。</p>
+        <form class="guardian-login-card" id="guardianLoginForm">
+          <label class="field-label" for="guardianViewProfileId">家庭ID</label>
+          <input class="text-input" id="guardianViewProfileId" type="text" autocomplete="username" required>
+          <label class="field-label" for="guardianViewAccessCode">大人用確認コード</label>
+          <input class="text-input" id="guardianViewAccessCode" type="password" inputmode="numeric" autocomplete="current-password" required>
+          <button class="primary-button" type="submit">会話を確認する</button>
+          <p class="inline-error" id="guardianLoginError" role="alert"></p>
+        </form>
+        <p class="privacy-note">会話はサーバー上で期限付き保持され、技術ログやGitには保存されません。</p>
+      </section>
+
+      <section class="screen guardian-chat-screen" data-screen="guardian-chat" aria-labelledby="guardianChatTitle">
+        <div class="guardian-chat-heading">
+          <div><p class="section-label">大人確認用</p><h1 id="guardianChatTitle">届いたお話</h1></div>
+          <button class="secondary-button compact" id="refreshGuardianChat" type="button">更新</button>
+        </div>
+        <p class="family-id-line">家庭ID <code id="guardianChatProfileId"></code></p>
+        <div class="chat-list" id="guardianChatList" aria-live="polite"></div>
+        <p class="privacy-note" id="guardianRetentionNote"></p>
+      </section>
+
+      <section class="screen" data-screen="setup" aria-labelledby="setupTitle">
         <div class="sky-sparkles" aria-hidden="true"><i>✦</i><i>★</i><i>✦</i></div>
         <div class="setup-hero">
           <img class="mascot mascot-welcome" src="/assets/messenger-mascot.png" alt="">
@@ -27,6 +71,10 @@
         </div>
         <h1 id="setupTitle">いっしょに<br>おはなししよう</h1>
         <p class="lead">きょうのこと、きかせてね</p>
+        <div class="family-share-card">
+          <div><span>家庭ID</span><code id="childFamilyId"></code></div>
+          <button class="text-button" id="copyFamilyIdButton" type="button">IDをコピー</button>
+        </div>
         <div class="adult-gate" hidden>
           <div>
             <p class="section-label">大人の確認</p>
@@ -213,6 +261,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=23"></script>
+    <script type="module" src="/app.js?v=24"></script>
   </body>
 </html>

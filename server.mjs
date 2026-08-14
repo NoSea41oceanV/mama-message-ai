@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import {
   GuardianSamplingError,
 } from "./lib/guardian-sampling.mjs";
@@ -210,6 +210,14 @@ function readGuardianProfileId(req) {
   return GUARDIAN_PROFILE_ID_PATTERN.test(raw) ? raw.toLowerCase() : false;
 }
 
+function guardianAccessCodeMatches(provided, expected) {
+  const actualBytes = Buffer.from(String(provided ?? "").trim(), "utf8");
+  const expectedBytes = Buffer.from(String(expected ?? "").trim(), "utf8");
+  return expectedBytes.length > 0
+    && actualBytes.length === expectedBytes.length
+    && timingSafeEqual(actualBytes, expectedBytes);
+}
+
 function profileDemoConsent(profileId) {
   return {
     ...demoConsent,
@@ -391,11 +399,25 @@ function rememberConversationTurn(guardianProfileId, conversationId, childMessag
   const turns = previous && now - previous.updatedAt <= conversationTtlMs
     ? [...previous.turns]
     : [];
-  turns.push({ childMessage, guardianReply });
+  turns.push({ childMessage, guardianReply, at: new Date(now).toISOString() });
   conversations.set(key, {
+    guardianProfileId,
+    conversationId,
     updatedAt: now,
     turns: turns.slice(-MAX_CONVERSATION_TURNS),
   });
+}
+
+function guardianConversationView(guardianProfileId, now = Date.now()) {
+  purgeExpiredData(now);
+  return [...conversations.values()]
+    .filter((conversation) => conversation.guardianProfileId === guardianProfileId)
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .map((conversation) => ({
+      conversationId: conversation.conversationId,
+      updatedAt: new Date(conversation.updatedAt).toISOString(),
+      turns: conversation.turns.map((turn) => ({ ...turn })),
+    }));
 }
 
 function purgeExpiredData(now = Date.now()) {
@@ -415,6 +437,14 @@ function purgeExpiredData(now = Date.now()) {
 }
 
 function createAdultHandoff(current, decision, adultMessage) {
+  if (current.guardianProfileId && current.conversationId && current.confirmedTranscript) {
+    rememberConversationTurn(
+      current.guardianProfileId,
+      current.conversationId,
+      current.confirmedTranscript,
+      adultMessage,
+    );
+  }
   return {
     ...current,
     route: "safety_escalation",
@@ -861,6 +891,28 @@ async function apiHandler(req, res, url, runtime = {}) {
     });
     return true;
   }
+  if (req.method === "GET" && url.pathname === "/api/guardian/conversations") {
+    const guardianProfileId = readGuardianProfileId(req);
+    if (!guardianProfileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!runtime.guardianViewAccessCode) {
+      sendJson(res, 503, { error: "GUARDIAN_VIEW_NOT_CONFIGURED" });
+      return true;
+    }
+    if (!guardianAccessCodeMatches(req.headers["x-guardian-access-code"], runtime.guardianViewAccessCode)) {
+      sendJson(res, 401, { error: "GUARDIAN_VIEW_UNAUTHORIZED" });
+      return true;
+    }
+    res.setHeader("cache-control", "no-store");
+    sendJson(res, 200, {
+      guardianProfileId,
+      retentionMinutes: Math.round(conversationTtlMs / 60000),
+      conversations: guardianConversationView(guardianProfileId),
+    });
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/consent") {
     const profileId = readGuardianProfileId(req);
     if (profileId === false) {
@@ -965,6 +1017,7 @@ async function apiHandler(req, res, url, runtime = {}) {
         status: "PENDING",
         guardianProfileId,
         conversationId: input.conversationId,
+        confirmedTranscript: input.confirmedTranscript,
         createdAt: new Date().toISOString(),
       };
       responses.set(requestId, record);
@@ -1054,6 +1107,9 @@ export function createAppServer(options = {}) {
     videoService: options.videoService ?? guardianVideoService,
     customVoiceService: options.customVoiceService ?? customVoiceService,
     elevenLabsVoiceService: options.elevenLabsVoiceService ?? elevenLabsVoiceService,
+    guardianViewAccessCode: String(options.guardianViewAccessCode
+      ?? process.env.GUARDIAN_VIEW_ACCESS_CODE
+      ?? (routerMode === "demo" ? "2468" : "")).trim(),
   };
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -1068,7 +1124,8 @@ export function createAppServer(options = {}) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 4173);
-  createAppServer().listen(port, "127.0.0.1", () => {
-    console.log(`Guardian AI Message running at http://127.0.0.1:${port}`);
+  const host = String(process.env.HOST || "127.0.0.1").trim();
+  createAppServer().listen(port, host, () => {
+    console.log(`Guardian AI Message running at http://${host}:${port}`);
   });
 }

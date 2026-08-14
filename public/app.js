@@ -3,6 +3,7 @@ const backButton = document.querySelector("#backButton");
 const adultButton = document.querySelector("#adultButton");
 const adultDialog = document.querySelector("#adultDialog");
 const closeDialog = document.querySelector("#closeDialog");
+const adultGate = document.querySelector(".adult-gate");
 const consentCheck = document.querySelector("#consentCheck");
 const consentDisclosure = document.querySelector("#consentDisclosure");
 const startSetup = document.querySelector("#startSetup");
@@ -953,13 +954,14 @@ function continueTalking() {
 
 function applyConsent(consent) {
   state.consent = consent.active ? consent : null;
+  adultGate.hidden = Boolean(consent.active);
   consentDisclosure.textContent = consent.active
     ? `${consent.subjectLabel} / ${consent.disclosure || "本人同意済み素材"}`
     : "素材利用は停止されています。大人向け画面で確認してください。";
   consentAdminStatus.textContent = consent.active ? "素材利用: 有効" : "素材利用: 停止中";
-  consentCheck.checked = consent.active ? consentCheck.checked : false;
+  consentCheck.checked = Boolean(consent.active);
   consentCheck.disabled = !consent.active;
-  startSetup.disabled = !consent.active || !consentCheck.checked;
+  startSetup.disabled = !consent.active;
   revokeConsent.disabled = !consent.active;
   restoreConsent.disabled = consent.active;
 }
@@ -1063,6 +1065,7 @@ Promise.all([profileFetch("/api/consent").then((response) => response.json()), l
     connectionStatus.textContent = "じゅんびできたよ";
   })
   .catch(() => {
+    adultGate.hidden = false;
     consentDisclosure.textContent = "同意情報を確認できません";
     connectionStatus.textContent = "おとなと確認してね";
   });

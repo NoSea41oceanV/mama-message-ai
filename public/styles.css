@@ -100,7 +100,8 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   border: 2px solid var(--rule);
   border-radius: 50%;
   background: var(--white);
-  font-size: 15px;
+  font-size: 24px;
+  line-height: 1;
 }
 
 .icon-button.large {
@@ -341,6 +342,8 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .celebration i:nth-child(5) { bottom: 110px; left: 14px; color: var(--coral); font-size: 22px; animation-delay: -1.6s; }
 .celebration i:nth-child(6) { bottom: 50px; right: 22px; color: var(--mint); font-size: 15px; animation-delay: -2s; }
 
+.screen[data-screen="response"] { overflow-y: auto; }
+
 .media-stage {
   position: relative;
   overflow: hidden;
@@ -396,20 +399,33 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .media-stage.is-speaking .guardian-live-badge { opacity: 1; transform: translateY(0); }
 .media-stage.is-speaking .guardian-live-badge i { animation: live-pulse .7s ease-in-out infinite alternate; }
 .subtitle {
-  position: absolute;
-  right: 12px;
-  bottom: 14px;
-  left: 12px;
-  margin: 0;
-  padding: 12px 13px;
-  border: 2px solid rgb(8 47 85 / 8%);
-  border-radius: 8px;
-  background: rgb(255 255 255 / 96%);
+  position: relative;
+  width: min(100%, 340px);
+  margin: 2px auto 20px;
+  padding: 14px 16px;
+  border: 3px solid var(--mint);
+  border-radius: 22px;
+  background: var(--white);
   color: var(--ink-strong);
   font-size: 17px;
   font-weight: 900;
   line-height: 1.55;
-  text-align: center;
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  box-shadow: 0 6px 0 #37a38f, 0 12px 22px rgb(8 47 85 / 12%);
+}
+.subtitle::before {
+  content: "";
+  position: absolute;
+  top: -14px;
+  left: 28px;
+  width: 22px;
+  height: 22px;
+  border-top: 3px solid var(--mint);
+  border-left: 3px solid var(--mint);
+  background: var(--white);
+  transform: rotate(45deg);
 }
 .voice-bars { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 3px; width: 44px; height: 36px; padding: 7px; border-radius: 8px; background: rgb(255 255 255 / 94%); }
 .voice-bars i { width: 4px; height: 8px; border-radius: 3px; background: var(--coral); }
@@ -528,7 +544,7 @@ dialog .secondary-button { box-shadow: none; }
   .waveform { height: 52px; }
   .mascot-flying { width: 165px; height: 165px; }
   .media-stage { width: 280px; }
-  .subtitle { font-size: 15px; line-height: 1.45; }
+  .subtitle { width: 280px; font-size: 15px; line-height: 1.45; }
 }
 
 @media (prefers-reduced-motion: reduce) {

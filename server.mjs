@@ -12,6 +12,7 @@ import {
   createPersistentGuardianSamplingStore,
 } from "./lib/persistent-guardian-sampling.mjs";
 import { createGuardianVideoService } from "./lib/guardian-video-service.mjs";
+import { createDidVideoProvider } from "./lib/providers/did-video.mjs";
 import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
@@ -50,14 +51,22 @@ const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
 const guardianSampling = createPersistentGuardianSamplingStore({
   directory: fileURLToPath(new URL("./.data/guardian-samples/", import.meta.url)),
 });
-const klingVideoProvider = createKlingVideoProvider();
+const videoGenerationMode = String(process.env.VIDEO_GENERATION_PROVIDER || "disabled").trim().toLowerCase();
+const videoRequestTimeoutMs = Number(
+  process.env.VIDEO_REQUEST_TIMEOUT_SECONDS
+    || process.env.KLING_VIDEO_REQUEST_TIMEOUT_SECONDS
+    || 30,
+) * 1000;
+const videoProvider = videoGenerationMode === "did"
+  ? createDidVideoProvider({ timeoutMs: videoRequestTimeoutMs })
+  : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
 const guardianVideoService = createGuardianVideoService({
   samplingStore: guardianSampling,
-  provider: klingVideoProvider,
-  pollIntervalMs: Number(process.env.KLING_VIDEO_POLL_INTERVAL_SECONDS || 5) * 1000,
-  pollTimeoutMs: Number(process.env.KLING_VIDEO_POLL_TIMEOUT_SECONDS || 600) * 1000,
-  maximumBytes: Number(process.env.KLING_VIDEO_MAX_BYTES || 25 * 1024 * 1024),
-  downloadTimeoutMs: Number(process.env.KLING_VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
+  provider: videoProvider,
+  pollIntervalMs: Number(process.env.VIDEO_POLL_INTERVAL_SECONDS || process.env.KLING_VIDEO_POLL_INTERVAL_SECONDS || 5) * 1000,
+  pollTimeoutMs: Number(process.env.VIDEO_POLL_TIMEOUT_SECONDS || process.env.KLING_VIDEO_POLL_TIMEOUT_SECONDS || 600) * 1000,
+  maximumBytes: Number(process.env.VIDEO_MAX_BYTES || process.env.KLING_VIDEO_MAX_BYTES || 25 * 1024 * 1024),
+  downloadTimeoutMs: Number(process.env.VIDEO_DOWNLOAD_TIMEOUT_SECONDS || process.env.KLING_VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
 });
 const guardianSamplingRecordingText = "お話ししてくれてありがとう。いつも応援しているよ。";
 const demoConsentByProfile = new Map();
@@ -712,7 +721,9 @@ async function apiHandler(req, res, url, runtime = {}) {
       sttConfigured: Boolean(process.env.STT_API_KEY || process.env.OPENAI_API_KEY),
       mediaMode: String(process.env.MEDIA_PROVIDER || "demo").toLowerCase(),
       preRecordedVideoConfigured: Boolean(process.env.PREGENERATED_VIDEO_URL),
-      videoGenerationConfigured: klingVideoProvider.available,
+      videoGenerationMode,
+      videoGenerationProvider: videoProvider.name,
+      videoGenerationConfigured: videoProvider.available,
     });
     return true;
   }

@@ -3,6 +3,10 @@ import { test } from "node:test";
 
 import { createOrcaRouterProvider } from "../lib/providers/orcarouter.mjs";
 import {
+  DidVideoProviderError,
+  createDidVideoProvider,
+} from "../lib/providers/did-video.mjs";
+import {
   KlingVideoProviderError,
   createKlingVideoProvider,
 } from "../lib/providers/kling-video.mjs";
@@ -23,6 +27,193 @@ const validOrcaResponse = {
   voiceTone: "bright",
   expression: "smiling",
 };
+
+const rawPngBase64 = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
+]).toString("base64");
+
+test("D-ID uploads a raw image then creates a silent idle talk", async () => {
+  const requests = [];
+  const provider = createDidVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "did",
+      DID_API_KEY: "dashboard-user:dashboard-password",
+      DID_BASE_URL: "https://api.d-id.test",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/images")) {
+        return new Response(JSON.stringify({ url: "https://uploads.d-id.test/guardian.png" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "talk-1", status: "created" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  const task = await provider.createTask({ imageBase64: rawPngBase64 });
+  assert.deepEqual(task, { taskId: "talk-1", status: "queued", videoUrl: null });
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].url, "https://api.d-id.test/images");
+  assert.equal(
+    requests[0].init.headers.authorization,
+    `Basic ${Buffer.from("dashboard-user:dashboard-password").toString("base64")}`,
+  );
+  assert.equal(requests[0].init.headers["content-type"], undefined);
+  assert.ok(requests[0].init.body instanceof FormData);
+  const image = requests[0].init.body.get("image");
+  assert.ok(image instanceof Blob);
+  assert.equal(image.type, "image/png");
+  assert.equal(image.size, 9);
+
+  assert.equal(requests[1].url, "https://api.d-id.test/talks");
+  const talk = JSON.parse(requests[1].init.body);
+  assert.deepEqual(talk, {
+    source_url: "https://uploads.d-id.test/guardian.png",
+    driver_url: "bank://lively/driver-06",
+    script: {
+      type: "text",
+      ssml: true,
+      input: '<break time="5000ms"/>',
+      provider: { type: "microsoft", voice_id: "ja-JP-NanamiNeural" },
+    },
+    config: { fluent: true },
+  });
+});
+
+test("D-ID preserves an already-prefixed Basic authorization value", async () => {
+  let authorization;
+  const provider = createDidVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "did", DID_API_KEY: "Basic already-encoded" },
+    fetchImpl: async (_url, init) => {
+      authorization = init.headers.authorization;
+      return new Response(JSON.stringify({ id: "talk-1", status: "started" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  await provider.getTask("talk-1");
+  assert.equal(authorization, "Basic already-encoded");
+});
+
+test("D-ID accepts an S3 image URL returned by its upload API", async () => {
+  const requests = [];
+  const provider = createDidVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "did",
+      DID_API_KEY: "user:password",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/images")) {
+        return new Response(JSON.stringify({ url: "s3://d-id-private/guardian.png" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ id: "talk-s3", status: "created" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  assert.equal((await provider.createTask({ imageBase64: rawPngBase64 })).taskId, "talk-s3");
+  assert.equal(JSON.parse(requests[1].init.body).source_url, "s3://d-id-private/guardian.png");
+});
+
+test("D-ID reports an ID-only upload response without attempting a talk", async () => {
+  let requestCount = 0;
+  const provider = createDidVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "did",
+      DID_API_KEY: "user:password",
+    },
+    fetchImpl: async () => {
+      requestCount += 1;
+      return new Response(JSON.stringify({ id: "uploaded-image-id" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  await assert.rejects(
+    provider.createTask({ imageBase64: rawPngBase64 }),
+    (error) => error instanceof DidVideoProviderError
+      && error.code === "DID_VIDEO_IMAGE_URL_MISSING"
+      && !error.message.includes("uploaded-image-id"),
+  );
+  assert.equal(requestCount, 1);
+});
+
+test("D-ID polls and normalizes talk statuses and result URLs", async () => {
+  const cases = [
+    ["created", "queued", null],
+    ["started", "processing", null],
+    ["done", "ready", "https://results.d-id.test/talk.mp4"],
+    ["error", "failed", null],
+  ];
+  for (const [providerStatus, expectedStatus, resultUrl] of cases) {
+    let requestedUrl;
+    const provider = createDidVideoProvider({
+      env: { VIDEO_GENERATION_PROVIDER: "did", DID_API_KEY: "user:password" },
+      fetchImpl: async (url) => {
+        requestedUrl = url;
+        return new Response(JSON.stringify({ id: "talk/with spaces", status: providerStatus, result_url: resultUrl }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    assert.deepEqual(await provider.getTask("talk/with spaces"), {
+      taskId: "talk/with spaces",
+      status: expectedStatus,
+      videoUrl: resultUrl,
+    });
+    assert.equal(requestedUrl, "https://api.d-id.com/talks/talk%2Fwith%20spaces");
+  }
+});
+
+test("D-ID exposes sanitized typed failures without credentials or response bodies", async () => {
+  const provider = createDidVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "did", DID_API_KEY: "sensitive-user:sensitive-password" },
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: { kind: "InsufficientCreditsError", description: "sensitive upstream body" },
+    }), { status: 402, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    provider.getTask("talk-1"),
+    (error) => error instanceof DidVideoProviderError
+      && error.code === "DID_VIDEO_HTTP_ERROR"
+      && error.status === 402
+      && error.providerCode === "InsufficientCreditsError"
+      && !error.message.includes("sensitive upstream body")
+      && !error.message.includes("sensitive-password"),
+  );
+});
+
+test("D-ID is available only when selected with an HTTPS endpoint and key", async () => {
+  assert.equal(createDidVideoProvider({ env: {} }).available, false);
+  assert.equal(createDidVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "kling", DID_API_KEY: "user:password" },
+  }).available, false);
+  assert.equal(createDidVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "did", DID_API_KEY: "user:password" },
+  }).available, true);
+  const disabled = createDidVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "disabled", DID_API_KEY: "user:password" },
+  });
+  await assert.rejects(
+    disabled.getTask("talk-1"),
+    (error) => error instanceof DidVideoProviderError && error.code === "DID_VIDEO_NOT_CONFIGURED",
+  );
+});
 
 test("Kling submits raw-base64 image-to-video defaults without a paid call", async () => {
   const requests = [];

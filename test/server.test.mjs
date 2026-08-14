@@ -68,9 +68,9 @@ test("classifies transition anxiety and basic needs", async () => {
   assert.equal(classifyTranscript("保育園に行きたくない").supportMode, "transition");
   assert.equal(classifyTranscript("おなかすいた").supportMode, "basic_need");
   const transition = await createAndWait({ confirmedTranscript: "保育園に行きたくない" });
-  assert.equal(transition.result.responseBundle.audioUrl, "/assets/audio/transition.wav");
+  assert.equal(transition.result.responseBundle.videoUrl, "/assets/video/transition.webm");
   const basicNeed = await createAndWait({ confirmedTranscript: "おなかすいた" });
-  assert.equal(basicNeed.result.responseBundle.audioUrl, "/assets/audio/basic_need.wav");
+  assert.equal(basicNeed.result.responseBundle.videoUrl, "/assets/video/basic_need.webm");
 });
 
 test("rejects unsafe or deceptive generated replies", () => {
@@ -142,8 +142,9 @@ test("runs transcription and response contracts end to end", async () => {
   assert.deepEqual(ready.emotion, ready.routerDecision.emotion);
   assert.equal(ready.responseBundle.ready, true);
   assert.deepEqual(ready.bundle, ready.responseBundle);
-  assert.equal(ready.responseBundle.tier, "STILL_AUDIO");
-  assert.match(ready.responseBundle.audioUrl, /^\/assets\/audio\/.+\.wav$/);
+  assert.equal(ready.responseBundle.tier, "PRE_RECORDED_VIDEO");
+  assert.match(ready.responseBundle.videoUrl, /^\/assets\/video\/.+\.webm$/);
+  assert.equal(ready.responseBundle.audioInVideo, true);
   assert.equal(ready.responseBundle.speechSynthesis, false);
   assert.ok(ready.responseBundle.subtitle);
 });
@@ -155,6 +156,15 @@ test("serves deterministic demo reply audio", async () => {
   assert.match(response.headers.get("content-type"), /^audio\/wav/);
   assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
   assert.ok(bytes.length > 100_000);
+});
+
+test("serves a playable reply video with embedded audio", async () => {
+  const response = await fetch(`${baseUrl}/assets/video/celebrate.webm`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type"), /^video\/webm/);
+  assert.equal(bytes.subarray(0, 4).toString("hex"), "1a45dfa3");
+  assert.ok(bytes.length > 500_000);
 });
 
 test("safety route never returns guardian media", async () => {

@@ -156,12 +156,25 @@ const demoReplyAudioUrls = Object.freeze({
   listen: "/assets/audio/listen.wav",
   clarify: "/assets/audio/clarify.wav",
 });
+const demoReplyVideoUrls = Object.freeze({
+  celebrate: "/assets/video/celebrate.webm",
+  comfort: "/assets/video/comfort.webm",
+  calm: "/assets/video/calm.webm",
+  encourage: "/assets/video/encourage.webm",
+  transition: "/assets/video/transition.webm",
+  basic_need: "/assets/video/basic_need.webm",
+  listen: "/assets/video/listen.webm",
+  clarify: "/assets/video/clarify.webm",
+});
 const mediaProvider = createMediaProvider({
   assets: {
     preRecordedVideoUrl: process.env.PREGENERATED_VIDEO_URL || null,
     posterUrl: "/assets/guardian-demo.png",
   },
   timeoutMs: Math.min(Number(process.env.MEDIA_TIMEOUT_SECONDS || 18), 18) * 1000,
+  preRecordedVideoUrlForDecision: (decision) => routerMode === "demo"
+    ? demoReplyVideoUrls[decision.supportMode] ?? null
+    : null,
   audioUrlForDecision: (decision) => routerMode === "demo"
     ? demoReplyAudioUrls[decision.supportMode] ?? null
     : null,
@@ -321,7 +334,9 @@ async function finishResponse(requestId, input, startedAt) {
 
   let responseBundle;
   try {
-    const defaultFault = process.env.PREGENERATED_VIDEO_URL ? "generated_video_failure" : "video_failure";
+    const defaultFault = routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
+      ? "generated_video_failure"
+      : "video_failure";
     responseBundle = await mediaProvider.generate({
       decision,
       replyText: decision.replyText,

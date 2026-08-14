@@ -56,8 +56,7 @@
 
     function draw(time) {
       const scene = scenes.find((item) => time >= item.start && time < item.end) ?? scenes.at(-1);
-      const local = Math.max(0, time - scene.start);
-      const fade = Math.min(1, local / 0.55, (scene.end - time) / 0.55);
+      const fade = 1;
       context.fillStyle = "#eef2f6";
       context.fillRect(0, 0, 1280, 720);
       context.fillStyle = "#ffffff";

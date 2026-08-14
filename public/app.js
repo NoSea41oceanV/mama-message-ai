@@ -30,6 +30,7 @@ const playbackControls = document.querySelector("#playbackControls");
 const replayButton = document.querySelector("#replayButton");
 const soundButton = document.querySelector("#soundButton");
 const finishButton = document.querySelector("#finishButton");
+const talkAgainButton = document.querySelector("#talkAgainButton");
 const adultConfirmButton = document.querySelector("#adultConfirmButton");
 const adultHandoffMessage = document.querySelector("#adultHandoffMessage");
 const decisionList = document.querySelector("#decisionList");
@@ -245,6 +246,9 @@ function waitForMedia(element, timeoutMs = 5000) {
 
 async function prepareResponse(data) {
   const bundle = data.responseBundle;
+  const responseScreen = document.querySelector('[data-screen="response"]');
+  responseScreen.dataset.supportMode = data.supportMode ?? data.routerDecision?.supportMode ?? "listen";
+  responseScreen.classList.toggle("is-neutral-response", bundle.parentLike === false);
   subtitle.textContent = bundle.subtitle;
   responseTitle.textContent = bundle.parentLike === false ? "いっしょに確認しよう" : "おへんじがとどいたよ";
   responsePoster.src = bundle.posterUrl ?? "";
@@ -256,6 +260,7 @@ async function prepareResponse(data) {
   voiceBars.hidden = !bundle.videoUrl && !bundle.audioUrl && !bundle.speechSynthesis;
   if (bundle.videoUrl) {
     responseVideo.src = bundle.videoUrl;
+    responseVideo.poster = bundle.posterUrl ?? "";
     await waitForMedia(responseVideo);
   } else {
     responseVideo.removeAttribute("src");
@@ -284,7 +289,12 @@ async function playResponse() {
   mediaStage.classList.add("is-speaking");
   if (bundle.videoUrl) {
     responseVideo.currentTime = 0;
-    await responseVideo.play();
+    responseVideo.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
+    try {
+      await responseVideo.play();
+    } catch {
+      mediaStage.classList.remove("is-speaking");
+    }
     return;
   }
   if (bundle.audioUrl) {
@@ -353,6 +363,25 @@ function resetFlow() {
   showScreen("setup");
 }
 
+function continueTalking() {
+  stopSpeech();
+  if (state.requestId) fetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+  state.sessionId = crypto.randomUUID();
+  state.transcriptId = null;
+  state.requestId = null;
+  state.response = null;
+  transcriptInput.value = "";
+  subtitle.textContent = "";
+  responsePoster.removeAttribute("src");
+  responseVideo.removeAttribute("src");
+  responseVideo.load();
+  responseAudio.removeAttribute("src");
+  responseAudio.load();
+  timer.textContent = "00:00";
+  setRecordState(false);
+  showScreen("record");
+}
+
 function applyConsent(consent) {
   state.consent = consent.active ? consent : null;
   consentDisclosure.textContent = consent.active
@@ -386,6 +415,7 @@ cancelButton.addEventListener("click", resetFlow);
 replayButton.addEventListener("click", playResponse);
 soundButton.addEventListener("click", stopSpeech);
 finishButton.addEventListener("click", resetFlow);
+talkAgainButton.addEventListener("click", continueTalking);
 adultConfirmButton.addEventListener("click", async () => { await loadLogs(); adultDialog.showModal(); });
 adultButton.addEventListener("click", async () => { await loadLogs(); adultDialog.showModal(); });
 closeDialog.addEventListener("click", () => adultDialog.close());

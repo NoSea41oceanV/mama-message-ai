@@ -145,6 +145,7 @@ test("guardian video service marks a reusable avatar ready without requiring a p
         deletedAssets.push(assetId);
         return true;
       },
+      deleteTask: async () => true,
     };
     const service = createGuardianVideoService({
       samplingStore: store,
@@ -159,9 +160,12 @@ test("guardian video service marks a reusable avatar ready without requiring a p
       jobId: "video_avatar-job",
     });
     assert.equal(service.profileProviderTaskId(profileId), "avatar-1");
-    assert.deepEqual(deletedAssets, ["photo-asset-1"]);
+    assert.equal(service.profileProviderAssetId(profileId), "photo-asset-1");
+    assert.deepEqual(deletedAssets, []);
     assert.equal(store.videoJob(profileId, queued.jobId).provider, "heygen");
-    assert.equal(store.videoJob(profileId, queued.jobId).providerAssetId, null);
+    assert.equal(store.videoJob(profileId, queued.jobId).providerAssetId, "photo-asset-1");
+    assert.equal(await service.deleteRemote(profileId), true);
+    assert.deepEqual(deletedAssets, ["photo-asset-1"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

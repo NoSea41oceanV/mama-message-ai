@@ -24,8 +24,6 @@ const responseVideo = document.querySelector("#responseVideo");
 const responseAudio = document.querySelector("#responseAudio");
 const guardianPortrait = document.querySelector("#guardianPortrait");
 const responsePoster = document.querySelector("#responsePoster");
-const responseEyes = document.querySelector("#responseEyes");
-const responseMouth = document.querySelector("#responseMouth");
 const neutralMedia = document.querySelector("#neutralMedia");
 const mediaStage = document.querySelector("#mediaStage");
 const subtitle = document.querySelector("#subtitle");
@@ -132,10 +130,6 @@ const state = {
   videoGenerationBusy: false,
   videoGenerationPollingJobId: null,
   videoGenerationPollAbort: null,
-  responseAudioContext: null,
-  responseAudioSource: null,
-  responseAnalyser: null,
-  portraitAnimationFrame: null,
   responseUtterance: null,
 };
 
@@ -386,10 +380,10 @@ function renderVideoGeneration(value = state.sample) {
 
   if (generation.status === "queued") videoGenerationStatus.textContent = "本人アバターの準備を受け付けました。順番を待っています。";
   else if (generation.status === "processing") videoGenerationStatus.textContent = "本人アバターを準備しています。画面を閉じても処理は続きます。";
-  else if (generation.status === "ready") videoGenerationStatus.textContent = "本人アバターの準備ができました。次の返答から、内容に合う表情と身振りの動画を作ります。";
+  else if (generation.status === "ready") videoGenerationStatus.textContent = "動画素材の準備ができました。次の返答から、本人の口や表情が動く動画を作ります。";
   else if (generation.status === "failed") videoGenerationStatus.textContent = friendlyVideoFailureMessage(generation.message);
   else if (generation.status === "unavailable") videoGenerationStatus.textContent = generation.message || "動画生成サービスを利用できません。接続設定を確認してください。";
-  else videoGenerationStatus.textContent = active ? "登録写真から、表情と身振りをつける本人アバターを準備できます。" : "先に写真と声を登録してください。";
+  else videoGenerationStatus.textContent = active ? "登録写真から、本人動画に使う素材を準備できます。" : "先に写真と声を登録してください。";
 }
 
 function renderSampling(sample) {
@@ -882,7 +876,6 @@ function waitForMedia(element, timeoutMs = 5000) {
 }
 
 async function prepareResponse(data) {
-  stopPortraitAnimation();
   const bundle = data.responseBundle;
   const responseScreen = document.querySelector('[data-screen="response"]');
   responseScreen.dataset.supportMode = data.supportMode ?? data.routerDecision?.supportMode ?? "listen";
@@ -890,8 +883,6 @@ async function prepareResponse(data) {
   subtitle.textContent = bundle.subtitle;
   responseTitle.textContent = bundle.parentLike === false ? "いっしょに確認しよう" : "おへんじがとどいたよ";
   responsePoster.src = bundle.posterUrl ?? "";
-  responseEyes.src = bundle.posterUrl ?? "";
-  responseMouth.src = bundle.posterUrl ?? "";
   guardianPortrait.hidden = Boolean(bundle.videoUrl) || !bundle.posterUrl;
   responseVideo.hidden = !bundle.videoUrl;
   neutralMedia.hidden = Boolean(bundle.videoUrl || bundle.posterUrl);
@@ -917,68 +908,11 @@ async function prepareResponse(data) {
   }
 }
 
-function isAnimatedGuardianPortrait(bundle = state.response?.responseBundle) {
-  return Boolean(bundle?.posterUrl && !bundle.videoUrl);
-}
-
-function stopPortraitAnimation() {
-  if (state.portraitAnimationFrame) cancelAnimationFrame(state.portraitAnimationFrame);
-  state.portraitAnimationFrame = null;
-  mediaStage.classList.remove("is-portrait-animated", "is-audio-fallback");
-  mediaStage.style.removeProperty("--mouth-shift");
-  mediaStage.style.removeProperty("--mouth-scale");
-  mediaStage.style.removeProperty("--portrait-tilt");
-}
-
-async function startPortraitAnimation({ syntheticSpeech = false } = {}) {
-  stopPortraitAnimation();
-  const eligible = isAnimatedGuardianPortrait();
-  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!eligible || reducedMotion) return;
-
-  mediaStage.classList.add("is-portrait-animated", "is-audio-fallback");
-  if (syntheticSpeech) return;
-  try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
-    state.responseAudioContext ||= new AudioContextClass();
-    state.responseAnalyser ||= state.responseAudioContext.createAnalyser();
-    state.responseAnalyser.fftSize = 256;
-    state.responseAnalyser.smoothingTimeConstant = 0.72;
-    if (!state.responseAudioSource) {
-      state.responseAudioSource = state.responseAudioContext.createMediaElementSource(responseAudio);
-      state.responseAudioSource.connect(state.responseAnalyser);
-      state.responseAnalyser.connect(state.responseAudioContext.destination);
-    }
-    await state.responseAudioContext.resume();
-    const samples = new Uint8Array(state.responseAnalyser.frequencyBinCount);
-    mediaStage.classList.remove("is-audio-fallback");
-    const updateMouth = () => {
-      if (responseAudio.paused || responseAudio.ended || !isAnimatedGuardianPortrait()) {
-        stopPortraitAnimation();
-        return;
-      }
-      state.responseAnalyser.getByteFrequencyData(samples);
-      const speechBins = samples.subarray(1, Math.min(42, samples.length));
-      const average = speechBins.reduce((sum, value) => sum + value, 0) / speechBins.length;
-      const energy = Math.max(0, Math.min(1, (average - 14) / 92));
-      mediaStage.style.setProperty("--mouth-shift", `${(energy * 8).toFixed(2)}px`);
-      mediaStage.style.setProperty("--mouth-scale", (1 + energy * .3).toFixed(3));
-      mediaStage.style.setProperty("--portrait-tilt", `${((energy - .5) * 1.2).toFixed(2)}deg`);
-      state.portraitAnimationFrame = requestAnimationFrame(updateMouth);
-    };
-    updateMouth();
-  } catch {
-    // The deterministic CSS animation remains active when Web Audio is unavailable.
-  }
-}
-
 function stopSpeech() {
   speechSynthesis.cancel();
   state.responseUtterance = null;
   responseVideo.pause();
   responseAudio.pause();
-  stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 }
 
@@ -988,9 +922,6 @@ async function playResponse() {
   const bundle = state.response.responseBundle;
   const hasVideo = Boolean(bundle.videoUrl);
   mediaStage.classList.add("is-speaking");
-  if (isAnimatedGuardianPortrait(bundle)) {
-    startPortraitAnimation({ syntheticSpeech: true });
-  }
   if (hasVideo) {
     responseVideo.currentTime = 0;
     responseVideo.loop = bundle.audioInVideo !== true;
@@ -1009,9 +940,7 @@ async function playResponse() {
     responseAudio.currentTime = 0;
     try {
       await responseAudio.play();
-      await startPortraitAnimation();
     } catch {
-      stopPortraitAnimation();
       mediaStage.classList.remove("is-speaking");
     }
     return;
@@ -1030,19 +959,14 @@ async function playResponse() {
   utterance.lang = "ja-JP";
   utterance.rate = Number(state.response.speechRate ?? 0.82);
   utterance.pitch = 1.04;
-  utterance.addEventListener("start", () => {
-    if (!hasVideo) startPortraitAnimation({ syntheticSpeech: true });
-  }, { once: true });
   utterance.addEventListener("end", () => {
     state.responseUtterance = null;
     if (hasVideo) responseVideo.pause();
-    stopPortraitAnimation();
     mediaStage.classList.remove("is-speaking");
   }, { once: true });
   utterance.addEventListener("error", () => {
     state.responseUtterance = null;
     if (hasVideo) responseVideo.pause();
-    stopPortraitAnimation();
     mediaStage.classList.remove("is-speaking");
   }, { once: true });
   speechSynthesis.speak(utterance);
@@ -1093,8 +1017,6 @@ function resetFlow() {
   transcriptInput.value = "";
   subtitle.textContent = "";
   responsePoster.removeAttribute("src");
-  responseEyes.removeAttribute("src");
-  responseMouth.removeAttribute("src");
   responseVideo.removeAttribute("src");
   responseVideo.load();
   responseAudio.removeAttribute("src");
@@ -1119,8 +1041,6 @@ function continueTalking() {
   transcriptInput.value = "";
   subtitle.textContent = "";
   responsePoster.removeAttribute("src");
-  responseEyes.removeAttribute("src");
-  responseMouth.removeAttribute("src");
   responseVideo.removeAttribute("src");
   responseVideo.load();
   responseAudio.removeAttribute("src");

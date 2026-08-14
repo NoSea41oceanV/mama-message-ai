@@ -458,6 +458,25 @@ function addTechnicalLog(entry) {
   technicalLogs.length = Math.min(technicalLogs.length, 50);
 }
 
+function safeExternalFailureReason(error, fallback) {
+  const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,80}$/.test(error.code)
+    ? error.code
+    : fallback;
+  const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
+    ? `:HTTP_${error.status}`
+    : "";
+  const providerCode = typeof error?.providerCode === "string" && /^[a-z0-9_.:-]{1,80}$/i.test(error.providerCode)
+    ? `:${error.providerCode}`
+    : "";
+  const providerDetail = typeof error?.providerDetail === "string" && error.providerDetail.length <= 240
+    ? `:${error.providerDetail}`
+    : "";
+  const providerParam = typeof error?.providerParam === "string" && /^[a-z0-9_.:[\]-]{1,120}$/i.test(error.providerParam)
+    ? `:PARAM_${error.providerParam}`
+    : "";
+  return `${code}${status}${providerCode}${providerDetail}${providerParam}`;
+}
+
 function conversationStorageKey(guardianProfileId, conversationId) {
   return `${guardianProfileId || "legacy"}:${conversationId}`;
 }
@@ -693,6 +712,9 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     const providerAvatarId = registeredSample
       ? activeVideoService.profileProviderTaskId?.(input.guardianProfileId)
       : null;
+    const providerImageAssetId = registeredSample
+      ? activeVideoService.profileProviderAssetId?.(input.guardianProfileId)
+      : null;
     if (
       providerAvatarId
       && clonedReplyAudio?.bytes
@@ -703,6 +725,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       try {
         replyTask = await activeReplyVideoProvider.renderReply({
           avatarId: providerAvatarId,
+          imageAssetId: providerImageAssetId,
           audioBytes: clonedReplyAudio.bytes,
           audioMimeType: clonedReplyAudio.mimeType,
           decision,
@@ -714,7 +737,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
         });
         generatedReplyVideoUrl = storeGeneratedReplyVideo(replyVideo);
       } catch (error) {
-        videoFailureReason = typeof error?.code === "string" ? error.code : "HEYGEN_REPLY_VIDEO_FAILED";
+        videoFailureReason = safeExternalFailureReason(error, "HEYGEN_REPLY_VIDEO_FAILED");
       } finally {
         if (replyTask?.taskId && typeof activeReplyVideoProvider.deleteReplyTask === "function") {
           await activeReplyVideoProvider.deleteReplyTask(replyTask.taskId).catch(() => {});
@@ -880,6 +903,7 @@ async function apiHandler(req, res, url, runtime = {}) {
         sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
         return true;
       }
+      await videoService.deleteRemote?.(profileId).catch(() => {});
       sendJson(res, 202, videoService.start(profileId));
     } catch (error) {
       sendJson(res, error.message === "PAYLOAD_TOO_LARGE" ? 413 : error.statusCode || 400, {

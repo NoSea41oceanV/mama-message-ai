@@ -8,6 +8,8 @@ process.env.STT_API_KEY = "";
 process.env.OPENAI_API_KEY = "";
 process.env.MEDIA_PROVIDER = "demo";
 process.env.VIDEO_GENERATION_PROVIDER = "disabled";
+process.env.VOICE_CLONING_PROVIDER = "disabled";
+process.env.ELEVENLABS_API_KEY = "";
 
 const { buildReply, classifyTranscript, createAppServer, replyIsAllowed } = await import("../server.mjs");
 
@@ -401,6 +403,102 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal((await fetch(`${baseUrl}${created.posterUrl}`)).status, 404);
   assert.equal((await fetch(`${baseUrl}${created.voicePreviewUrl}`)).status, 404);
   assert.equal((await (await fetch(`${baseUrl}/api/consent`, { headers: samplingProfileHeaders })).json()).consentId, "demo-consent-001");
+});
+
+test("ElevenLabs clone audio is generated for a registered guardian reply", async () => {
+  const calls = { clone: 0, synthesize: 0, deleted: [] };
+  const voiceProvider = {
+    name: "elevenlabs",
+    available: true,
+    cloneVoice: async ({ bytes, mimeType }) => {
+      calls.clone += 1;
+      assert.ok(bytes.length > 0);
+      assert.equal(mimeType, "audio/wav");
+      return { provider: "elevenlabs", voiceId: `voice-integration-${calls.clone}` };
+    },
+    synthesize: async ({ voiceId, text }) => {
+      calls.synthesize += 1;
+      assert.equal(voiceId, "voice-integration-2");
+      assert.ok(text.length > 0);
+      return { bytes: Buffer.from("ID3-cloned-reply"), mimeType: "audio/mpeg" };
+    },
+    deleteVoice: async (voiceId) => {
+      calls.deleted.push(voiceId);
+      return true;
+    },
+  };
+  const isolatedServer = createAppServer({ voiceCloningProvider: voiceProvider });
+  await new Promise((resolve) => isolatedServer.listen(0, "127.0.0.1", resolve));
+  const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.address().port}`;
+  const profileId = "22222222-2222-4222-8222-222222222222";
+  const headers = { "content-type": "application/json", "x-guardian-profile-id": profileId };
+  try {
+    const createdResponse = await fetch(`${isolatedBaseUrl}/api/sampling`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(samplingRegistration({ voiceDurationSeconds: 30 })),
+    });
+    const created = await createdResponse.json();
+    assert.equal(createdResponse.status, 201);
+    assert.equal(created.voiceCloningAvailable, true);
+
+    const voiceUpdateResponse = await fetch(`${isolatedBaseUrl}/api/sampling/voice`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        voiceBase64: samplingVoice.toString("base64"),
+        voiceType: "audio/wav",
+        voiceDurationSeconds: 30,
+        voiceApproved: true,
+      }),
+    });
+    const voiceUpdate = await voiceUpdateResponse.json();
+    assert.equal(voiceUpdateResponse.status, 200);
+    assert.equal(voiceUpdate.voiceCloningAvailable, true);
+    assert.equal(voiceUpdate.posterUrl, created.posterUrl);
+    assert.equal(voiceUpdate.videoGeneration.status, "not_started");
+
+    const responseRequest = await fetch(`${isolatedBaseUrl}/api/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        sessionId: "voice-clone-session",
+        transcriptId: "voice-clone-transcript",
+        confirmedTranscript: "ブロックでおうちを作れたよ",
+        consentId: created.consentId,
+        avatarAssetId: created.avatarAssetId,
+        idempotencyKey: `voice-clone:${crypto.randomUUID()}`,
+      }),
+    });
+    const pending = await responseRequest.json();
+    let result;
+    const deadline = Date.now() + 4000;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      result = await (await fetch(`${isolatedBaseUrl}/api/responses/${pending.requestId}`, {
+        headers: { "x-guardian-profile-id": profileId },
+      })).json();
+    } while (result.status === "PENDING" && Date.now() < deadline);
+
+    assert.equal(result.status, "READY");
+    assert.match(result.responseBundle.audioUrl, /^\/api\/generated-audio\//);
+    assert.equal(result.responseBundle.speechSynthesis, false);
+    assert.equal(result.responseBundle.guardianSampling.voiceCloningUsed, true);
+    const audio = await fetch(`${isolatedBaseUrl}${result.responseBundle.audioUrl}`);
+    assert.equal(audio.status, 200);
+    assert.equal(audio.headers.get("content-type"), "audio/mpeg");
+    assert.match(Buffer.from(await audio.arrayBuffer()).toString(), /^ID3/);
+
+    const deleted = await fetch(`${isolatedBaseUrl}/api/sampling`, { method: "DELETE", headers });
+    assert.equal(deleted.status, 200);
+    assert.deepEqual(calls, {
+      clone: 2,
+      synthesize: 1,
+      deleted: ["voice-integration-1", "voice-integration-2"],
+    });
+  } finally {
+    await new Promise((resolve) => isolatedServer.close(resolve));
+  }
 });
 
 test("sampling API rejects missing consent, MIME spoofing, and cross-site mutation", async () => {

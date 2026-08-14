@@ -49,6 +49,41 @@ test("sampling registration requires both explicit approvals and hides raw media
   assert.equal(JSON.stringify(status).includes(wav.toString("base64")), false);
 });
 
+test("trusted ElevenLabs clone metadata is available without exposing the voice ID", () => {
+  const store = createGuardianSamplingStore();
+  const status = store.register(validRegistration(), {
+    voiceClone: { provider: "elevenlabs", voiceId: "private-voice-id" },
+  });
+  assert.equal(status.voiceCloningAvailable, true);
+  assert.doesNotMatch(JSON.stringify(status), /private-voice-id/);
+  const resolved = store.resolve(status.consentId, status.avatarAssetId);
+  assert.deepEqual(resolved.voiceClone, { provider: "elevenlabs", voiceId: "private-voice-id" });
+});
+
+test("voice-only replacement preserves the guardian photo and consent identifiers", () => {
+  const store = createGuardianSamplingStore();
+  const first = store.register(validRegistration(), {
+    voiceClone: { provider: "elevenlabs", voiceId: "voice-old" },
+  });
+  const before = store.resolve(first.consentId, first.avatarAssetId);
+  const previousVoice = before.voice.bytes;
+  const updated = store.replaceVoice({
+    voiceBase64: wav.toString("base64"),
+    voiceType: "audio/wav",
+    voiceDurationSeconds: 30,
+    voiceApproved: true,
+  }, {
+    voiceClone: { provider: "elevenlabs", voiceId: "voice-new" },
+  });
+  const after = store.resolve(updated.consentId, updated.avatarAssetId);
+  assert.equal(updated.consentId, first.consentId);
+  assert.equal(updated.avatarAssetId, first.avatarAssetId);
+  assert.equal(after.photo, before.photo);
+  assert.equal(after.voice.durationSeconds, 30);
+  assert.equal(after.voiceClone.voiceId, "voice-new");
+  assert.equal(previousVoice.every((byte) => byte === 0), true);
+});
+
 test("sampling registration rejects MIME spoofing and long voice samples", () => {
   const store = createGuardianSamplingStore();
   assert.throws(

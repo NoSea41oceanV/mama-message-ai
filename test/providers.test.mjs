@@ -11,6 +11,7 @@ import {
   createKlingVideoProvider,
 } from "../lib/providers/kling-video.mjs";
 import { SttProviderError, createSttProvider } from "../lib/providers/stt.mjs";
+import { ElevenLabsError, createElevenLabsProvider } from "../lib/providers/elevenlabs.mjs";
 import {
   DEMO_FAULT_MODES,
   MediaProviderError,
@@ -31,6 +32,64 @@ const validOrcaResponse = {
 const rawPngBase64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
 ]).toString("base64");
+
+test("ElevenLabs clones a sample and synthesizes Japanese reply audio", async () => {
+  const requests = [];
+  const provider = createElevenLabsProvider({
+    env: {
+      VOICE_CLONING_PROVIDER: "elevenlabs",
+      ELEVENLABS_API_KEY: "test-key",
+      ELEVENLABS_BASE_URL: "https://api.elevenlabs.test/v1",
+      ELEVENLABS_MODEL: "eleven_multilingual_v2",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/voices/add")) {
+        return new Response(JSON.stringify({ voice_id: "voice-test-123" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(Buffer.from("ID3-elevenlabs-audio"), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      });
+    },
+  });
+
+  const cloned = await provider.cloneVoice({
+    bytes: Buffer.from("RIFF....WAVE sample"),
+    mimeType: "audio/wav",
+    name: "Mama Message test",
+  });
+  const audio = await provider.synthesize({ voiceId: cloned.voiceId, text: "お話ししてくれてありがとう。" });
+
+  assert.equal(provider.available, true);
+  assert.equal(cloned.voiceId, "voice-test-123");
+  assert.equal(requests[0].init.headers["xi-api-key"], "test-key");
+  assert.ok(requests[0].init.body instanceof FormData);
+  assert.ok(requests[0].init.body.get("files") instanceof Blob);
+  assert.match(requests[1].url, /text-to-speech\/voice-test-123/);
+  assert.equal(JSON.parse(requests[1].init.body).language_code, "ja");
+  assert.equal(audio.mimeType, "audio/mpeg");
+  assert.match(audio.bytes.toString(), /^ID3/);
+});
+
+test("ElevenLabs failures are typed and do not expose configuration", async () => {
+  const provider = createElevenLabsProvider({
+    env: { VOICE_CLONING_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: "test-key" },
+    fetchImpl: async () => new Response(JSON.stringify({ detail: { message: "quota exceeded" } }), {
+      status: 429,
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  await assert.rejects(
+    provider.synthesize({ voiceId: "voice-id", text: "こんにちは" }),
+    (error) => error instanceof ElevenLabsError
+      && error.code === "ELEVENLABS_TTS_FAILED"
+      && error.status === 429,
+  );
+});
 
 test("D-ID uploads a raw image then creates a silent idle talk", async () => {
   const requests = [];

@@ -479,6 +479,9 @@ dialog .secondary-button { box-shadow: none; }
 .sample-picker strong { margin: 5px 0 3px; font-size: 14px; }
 .sample-picker > span:not(.sample-icon) { min-height: 34px; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .sample-phrase { margin: 2px 0 0; color: var(--ink); font-size: 10px; font-weight: 700; line-height: 1.45; }
+.sample-script { margin: -2px 0 14px; padding: 10px 12px; border: 1px solid #b8d5e1; border-radius: 8px; background: #f5fbfd; color: var(--ink); font-size: 12px; line-height: 1.65; }
+.sample-script summary { color: var(--sky-deep); font-weight: 900; cursor: pointer; }
+.sample-script p { margin: 8px 0 0; }
 .sample-picker input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .sample-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--sun); color: var(--ink-strong); font-size: 15px; font-weight: 900; box-shadow: 0 4px 0 var(--sun-deep); }
 .sample-picker img { width: calc(100% + 20px); height: 78px; margin: 10px -10px -13px; object-fit: cover; }

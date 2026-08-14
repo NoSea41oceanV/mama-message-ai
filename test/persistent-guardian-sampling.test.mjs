@@ -36,7 +36,9 @@ test("persistent samples survive restart, stay encrypted, and remain profile-iso
   const encryptionKey = Buffer.alloc(32, 7);
   try {
     const first = createPersistentGuardianSamplingStore({ directory, encryptionKey });
-    const savedA = first.register(profileA, registration("Aのおうちの人"));
+    const savedA = first.register(profileA, registration("Aのおうちの人"), {
+      voiceClone: { provider: "elevenlabs", voiceId: "private-elevenlabs-id" },
+    });
     first.register(profileB, registration("Bのおうちの人"));
 
     const encryptedSource = readFileSync(join(directory, `${profileA}.sample`), "utf8");
@@ -45,6 +47,8 @@ test("persistent samples survive restart, stay encrypted, and remain profile-iso
 
     const restarted = createPersistentGuardianSamplingStore({ directory, encryptionKey });
     assert.equal(restarted.status(profileA).subjectLabel, "Aのおうちの人");
+    assert.equal(restarted.status(profileA).voiceCloningAvailable, true);
+    assert.equal(restarted.resolve(profileA, savedA.consentId, savedA.avatarAssetId).voiceClone.voiceId, "private-elevenlabs-id");
     assert.equal(restarted.status(profileB).subjectLabel, "Bのおうちの人");
     assert.equal(restarted.resolve(profileB, savedA.consentId, savedA.avatarAssetId), null);
 

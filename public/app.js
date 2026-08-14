@@ -223,20 +223,20 @@ function readAudioDuration(url) {
 }
 
 async function setSampleVoice(blob, knownDurationSeconds = null) {
-  if (!blob || blob.size > 2 * 1024 * 1024) throw new Error("声のサンプルは2MB以下にしてください");
+  if (!blob || blob.size > 10 * 1024 * 1024) throw new Error("声のサンプルは10MB以下にしてください");
   const previewUrl = URL.createObjectURL(blob);
   const durationSeconds = Number.isFinite(knownDurationSeconds)
     ? knownDurationSeconds
     : await readAudioDuration(previewUrl);
-  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 10.2) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 30.5) {
     URL.revokeObjectURL(previewUrl);
-    throw new Error("声のサンプルは10秒以内にしてください");
+    throw new Error("声のサンプルは30秒以内にしてください");
   }
   state.sampleVoiceBlob = blob;
   state.sampleVoiceDurationSeconds = durationSeconds;
   sampleVoicePreview.src = previewUrl;
   sampleVoicePreview.hidden = false;
-  sampleVoiceLabel.textContent = `${Math.max(1, Math.round(blob.size / 1024))}KB・準備できました`;
+  sampleVoiceLabel.textContent = `${Math.round(durationSeconds)}秒・準備できました`;
 }
 
 async function stopSampleRecording() {
@@ -259,7 +259,7 @@ async function startSampleRecording() {
     state.sampleVoiceRecorder.addEventListener("stop", async () => {
       try {
         const blob = new Blob(state.sampleVoiceChunks, { type: state.sampleVoiceRecorder.mimeType || "audio/webm" });
-        const durationSeconds = Math.min(10, (Date.now() - state.sampleRecordStartedAt) / 1000);
+        const durationSeconds = Math.min(30, (Date.now() - state.sampleRecordStartedAt) / 1000);
         await setSampleVoice(blob, durationSeconds);
       } catch (error) {
         samplingStatus.textContent = error.message;
@@ -270,10 +270,10 @@ async function startSampleRecording() {
     sampleRecordButton.textContent = "録音を止める";
     sampleVoiceLabel.textContent = "録音中 0秒";
     state.sampleRecordTimer = setInterval(() => {
-      const seconds = Math.min(10, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
+      const seconds = Math.min(30, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
       sampleVoiceLabel.textContent = `録音中 ${seconds}秒`;
     }, 250);
-    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, 10000);
+    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, 30000);
   } catch {
     samplingStatus.textContent = "マイクを使えませんでした。音声ファイルを選んでください。";
   }
@@ -376,13 +376,19 @@ function renderSampling(sample) {
   if (sample?.voicePreviewUrl && !state.sampleVoiceBlob) {
     sampleVoicePreview.src = sample.voicePreviewUrl;
     sampleVoicePreview.hidden = false;
-    sampleVoiceLabel.textContent = "登録済み・再生できます";
+    sampleVoiceLabel.textContent = sample.voiceCloningAvailable
+      ? "音声クローン済み・再生できます"
+      : "登録済み・クローン未作成";
   } else if (!state.sampleVoiceBlob) {
     sampleVoicePreview.hidden = true;
-    sampleVoiceLabel.textContent = "10秒まで録音";
+    sampleVoiceLabel.textContent = "30秒まで録音";
   }
   faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
-  voiceConsentCheck.checked = Boolean(sample?.voiceApproved && configured);
+  voiceConsentCheck.checked = Boolean(
+    sample?.voiceApproved
+    && sample?.voiceCloningAvailable
+    && configured,
+  );
   renderVideoGeneration(sample);
 }
 
@@ -406,7 +412,8 @@ async function refreshConsent() {
 
 async function saveSampling() {
   samplingStatus.textContent = "";
-  if (!state.samplePhoto || !state.sampleVoiceBlob) {
+  const canReuseRegisteredPhoto = Boolean(state.sample?.configured && state.sample?.posterUrl);
+  if ((!state.samplePhoto && !canReuseRegisteredPhoto) || !state.sampleVoiceBlob) {
     samplingStatus.textContent = "顔写真と声のサンプルを両方用意してください。";
     return;
   }
@@ -420,15 +427,18 @@ async function saveSampling() {
     return;
   }
   saveSampleButton.disabled = true;
-  samplingStatus.textContent = "素材を登録しています";
+  samplingStatus.textContent = "素材を登録し、音声クローンを作成しています";
   try {
-    const response = await profileFetch("/api/sampling", {
+    const updatingVoiceOnly = !state.samplePhoto && canReuseRegisteredPhoto;
+    const response = await profileFetch(updatingVoiceOnly ? "/api/sampling/voice" : "/api/sampling", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         subjectLabel,
-        photoBase64: state.samplePhoto.base64,
-        photoType: state.samplePhoto.type,
+        ...(state.samplePhoto ? {
+          photoBase64: state.samplePhoto.base64,
+          photoType: state.samplePhoto.type,
+        } : {}),
         voiceBase64: await blobToBase64(state.sampleVoiceBlob),
         voiceType: state.sampleVoiceBlob.type,
         voiceDurationSeconds: state.sampleVoiceDurationSeconds,
@@ -444,7 +454,9 @@ async function saveSampling() {
     videoConsentCheck.checked = false;
     renderSampling(data);
     await refreshConsent();
-    samplingStatus.textContent = "登録しました。続けて返信動画を作成してください。";
+    samplingStatus.textContent = data.voiceCloningAvailable
+      ? "登録と音声クローンが完了しました。次の返答からこの声を使います。"
+      : "素材を登録しました。音声クローンはまだ利用できません。";
   } catch (error) {
     samplingStatus.textContent = error.message;
   } finally {

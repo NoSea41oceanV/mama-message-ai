@@ -13,6 +13,7 @@ process.env.ELEVENLABS_API_KEY = "";
 
 const {
   buildReply,
+  buildSeparationReply,
   classifyTranscript,
   createAppServer,
   refineGuardianReply,
@@ -137,6 +138,36 @@ test("rewrites counseling-bot phrasing into a natural daily reply", () => {
   assert.equal(refined.replyText, "うん、元気だよ！今日は何してたの？");
   assert.equal(refined.safetyLevel, "normal");
   assert.equal(refined.voiceTone, "warm");
+});
+
+test("gives truthful co-regulation replies for separation distress", () => {
+  assert.equal(
+    buildSeparationReply("ママに会いたい"),
+    "ママに会いたくなったんだね。寂しいよね。いま一緒にいる人のそばで、いっしょに待とうね。",
+  );
+  assert.equal(
+    buildSeparationReply("保育園のお迎えまだ？"),
+    "お迎えを待つの、長く感じるよね。先生に時間を聞いて、待つあいだ何をするか一緒に決めようね。",
+  );
+  assert.equal(
+    buildSeparationReply("パパといるけどママがいなくて泣いちゃう"),
+    "泣いても大丈夫だよ。ママに会いたくなったんだね。パパのそばで、ゆっくり三つ数えてみようね。",
+  );
+});
+
+test("replaces model promises with the separation-support reply", () => {
+  const decision = {
+    safetyLevel: "normal",
+    supportMode: "transition",
+    emotion: ["sadness"],
+    reasonCodes: ["SEPARATION_DISTRESS"],
+    replyText: "ママがすぐ迎えに行くから泣かないでね。",
+    voiceTone: "warm",
+    expression: "gentle",
+  };
+  const refined = refineGuardianReply(decision, "お迎えまだ？");
+  assert.doesNotMatch(refined.replyText, /すぐ迎え/);
+  assert.match(refined.replyText, /いま一緒にいる人に時間を聞いて/);
 });
 
 test("still hands concrete danger to an adult", () => {

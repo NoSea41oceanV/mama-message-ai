@@ -257,8 +257,37 @@ function shortConversationTopic(value, maximumLength = 28) {
     : `${normalized.slice(0, maximumLength)}…`;
 }
 
+function presentCaregiverLabel(value) {
+  if (/(パパ|お父さん|父さん)/.test(value)) return "パパ";
+  if (/(先生|保育園|幼稚園|こども園|延長保育)/.test(value)) return "先生";
+  if (/(ベビーシッター|シッター)/.test(value)) return "シッターさん";
+  return "いま一緒にいる人";
+}
+
+export function buildSeparationReply(transcript = "") {
+  const value = shortConversationTopic(transcript, 80);
+  if (!value) return null;
+  const caregiver = presentCaregiverLabel(value);
+  if (/(?:お迎え|ママ|お母さん).*(?:まだ|いつ|来る)|(?:まだ|いつ).*(?:お迎え|ママ|お母さん)/.test(value)) {
+    return `お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、待つあいだ何をするか一緒に決めようね。`;
+  }
+  if (/(?:ママ|お母さん).*(?:どこ|何してる)/.test(value)) {
+    return `ママのことが気になったんだね。${caregiver}に、お迎えのことを聞いてみようね。`;
+  }
+  const separationDistress = /(?:ママ|お母さん).*(?:会いたい|いな(?:い|く)|来て|さみしい|寂しい)|(?:会いたい|さみしい|寂しい).*(?:ママ|お母さん)/;
+  if (separationDistress.test(value) && /(泣|涙)/.test(value)) {
+    return `泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、ゆっくり三つ数えてみようね。`;
+  }
+  if (separationDistress.test(value)) {
+    return `ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、いっしょに待とうね。`;
+  }
+  return null;
+}
+
 export function buildReply(decision, transcript = "", history = []) {
   const currentTopic = shortConversationTopic(transcript);
+  const separationReply = buildSeparationReply(transcript);
+  if (separationReply) return separationReply;
   if (/(元気|げんき)[？?。！!]*$/.test(currentTopic)) {
     return "うん、元気だよ！今日は何してたの？";
   }
@@ -292,11 +321,11 @@ export function buildReply(decision, transcript = "", history = []) {
 export function refineGuardianReply(decision, transcript = "", history = []) {
   if (!decision || decision.safetyLevel !== "normal") return decision;
   const currentTopic = shortConversationTopic(transcript);
-  const fixedDailyReply = (
+  const fixedDailyReply = buildSeparationReply(transcript) ?? ((
     /(元気|げんき)[？?。！!]*$/.test(currentTopic)
     || /(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)
     || /(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)
-  ) ? buildReply(decision, transcript, history) : null;
+  ) ? buildReply(decision, transcript, history) : null);
   const soundsLikeCounselingBot = /(きみはどう|今日はどんな(?:気持ち|気分)|今どんな(?:気持ち|気分)|お話ししてくれてありがとう)/.test(
     String(decision.replyText ?? ""),
   );

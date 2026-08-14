@@ -481,6 +481,8 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.match(request.body.messages[0].content, /「今日暇？」→ normal/);
   assert.match(request.body.messages[0].content, /短い、くだけている、意図が少し曖昧という理由だけで/);
   assert.match(request.body.messages[0].content, /質問は多くても1つ/);
+  assert.match(request.body.messages[0].content, /分離不安だけを理由に adult_handoff にしない/);
+  assert.match(request.body.messages[0].content, /「すぐ迎えに行く」「もうすぐ着く」/);
   assert.deepEqual(request.body.messages.slice(1), [
     { role: "user", content: "きのうはタワーを作ったよ" },
     { role: "assistant", content: "高くできたんだね。" },

@@ -735,7 +735,7 @@ test("Tavus trains and deletes a Face through a short-lived public image URL", a
       if (url.endsWith("/v2/faces/face-custom") && init.method === "GET") {
         return new Response(JSON.stringify({ face_id: "face-custom", status: "completed" }), { status: 200 });
       }
-      if (url.endsWith("/v2/faces/face-custom") && init.method === "DELETE") {
+      if (url.endsWith("/v2/faces/face-custom?hard=true") && init.method === "DELETE") {
         return new Response("{}", { status: 200 });
       }
       throw new Error(`unexpected request: ${url}`);
@@ -754,6 +754,7 @@ test("Tavus trains and deletes a Face through a short-lived public image URL", a
   assert.equal(await provider.deleteAsset("asset-1"), true);
   assert.deepEqual(deletedAssets, ["asset-1"]);
   assert.equal(await provider.deleteTask("face-custom"), true);
+  assert.equal(requests.at(-1).url, "https://api.tavus.test/v2/faces/face-custom?hard=true");
 });
 
 test("Tavus training assets require a public HTTPS origin and erase bytes on delete", async () => {

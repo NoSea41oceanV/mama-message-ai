@@ -174,6 +174,7 @@ test("runs transcription and response contracts end to end", async () => {
   });
   assert.equal(createResponse.status, 202);
   const pending = await createResponse.json();
+  assert.equal(pending.conversationId, "session-test");
 
   await new Promise((resolve) => setTimeout(resolve, 1100));
   const readyResponse = await fetch(`${baseUrl}/api/responses/${pending.requestId}`);
@@ -264,6 +265,31 @@ test("idempotency key reuses the original request", async () => {
   assert.equal((await first.json()).requestId, (await second.json()).requestId);
 });
 
+test("conversationId continues demo replies with the previous exchange", async () => {
+  const conversationId = `conversation-${crypto.randomUUID()}`;
+  const first = await createAndWait({
+    conversationId,
+    confirmedTranscript: "ブロックでおうちを作ったよ",
+  });
+  assert.equal(first.pending.conversationId, conversationId);
+  assert.equal(first.result.conversationId, conversationId);
+  assert.match(first.result.replyText, /ブロックでおうち/);
+
+  const second = await createAndWait({
+    conversationId,
+    confirmedTranscript: "そのあと庭も作ったよ",
+  });
+  assert.match(second.result.replyText, /さっきの/);
+  assert.match(second.result.replyText, /ブロックでおうちを作ったよ/);
+  assert.match(second.result.replyText, /そのあと庭も作ったよ/);
+
+  const independent = await createAndWait({
+    conversationId: `conversation-${crypto.randomUUID()}`,
+    confirmedTranscript: "そのあと庭も作ったよ",
+  });
+  assert.doesNotMatch(independent.result.replyText, /さっきの/);
+});
+
 test("deletes session response data when the flow ends", async () => {
   const { pending } = await createAndWait();
   const deleted = await fetch(`${baseUrl}/api/responses/${pending.requestId}`, { method: "DELETE" });
@@ -307,7 +333,9 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "posterUrl",
     "subjectLabel",
     "voiceApproved",
+    "voiceCloningAvailable",
     "voicePreviewUrl",
+    "voiceSamplePurpose",
   ].sort());
   assert.equal(created.configured, true);
   assert.equal(created.active, true);
@@ -340,13 +368,17 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(result.status, "READY");
   assert.equal(result.responseBundle.fallbackLevel, 3);
   assert.equal(result.responseBundle.posterUrl, created.posterUrl);
-  assert.equal(result.responseBundle.audioUrl, created.voicePreviewUrl);
-  assert.equal(result.responseBundle.subtitle, "お話ししてくれてありがとう。いつも応援しているよ。");
-  assert.equal(result.responseBundle.replyText, "お話ししてくれてありがとう。いつも応援しているよ。");
-  assert.equal(result.replyText, "お話ししてくれてありがとう。いつも応援しているよ。");
+  assert.equal(result.responseBundle.audioUrl, null);
+  assert.equal(result.responseBundle.speechSynthesis, true);
+  assert.match(result.responseBundle.subtitle, /きょうブロックでおうちを作ったよ/);
+  assert.equal(result.responseBundle.replyText, result.replyText);
   assert.equal(result.responseBundle.guardianSampling.photoUsed, true);
   assert.equal(result.responseBundle.guardianSampling.voiceSampleRegistered, true);
-  assert.equal(result.responseBundle.guardianSampling.voiceUsed, true);
+  assert.equal(result.responseBundle.guardianSampling.voiceSamplePurpose, "sampling-confirmation");
+  assert.equal(result.responseBundle.guardianSampling.voiceSampleMatchesReply, false);
+  assert.equal(result.responseBundle.guardianSampling.voiceUsed, false);
+  assert.equal(result.responseBundle.guardianSampling.voiceCloningUsed, false);
+  assert.equal(result.responseBundle.guardianSampling.voiceFallback, "dynamic-tts");
 
   const { result: safetyResult } = await createAndWait({
     confirmedTranscript: "知らない人がいて怖い、助けて",

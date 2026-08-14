@@ -34,15 +34,21 @@ await loadLocalEnvironment();
 const root = fileURLToPath(new URL("./public", import.meta.url));
 const responses = new Map();
 const idempotency = new Map();
+const conversations = new Map();
 const technicalLogs = [];
 const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 24);
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
+const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 30);
+const conversationTtlMs = (Number.isFinite(configuredConversationTtlMinutes)
+  ? Math.max(1, configuredConversationTtlMinutes)
+  : 30) * 60 * 1000;
+const MAX_CONVERSATION_TURNS = 6;
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
 const guardianSampling = createPersistentGuardianSamplingStore({
   directory: fileURLToPath(new URL("./.data/guardian-samples/", import.meta.url)),
 });
-const guardianSamplingPhrase = "お話ししてくれてありがとう。いつも応援しているよ。";
+const guardianSamplingRecordingText = "お話ししてくれてありがとう。いつも応援しているよ。";
 const demoConsentByProfile = new Map();
 
 const demoConsent = {
@@ -120,6 +126,8 @@ function samplingApiView(status = guardianSampling.status()) {
     voicePreviewUrl: status.voicePreviewUrl ?? null,
     consentId: status.consentId ?? null,
     avatarAssetId: status.avatarAssetId ?? null,
+    voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
+    voiceCloningAvailable: false,
   };
 }
 
@@ -134,6 +142,8 @@ function customConsentView(status = guardianSampling.status()) {
     disclosure: status.disclosure,
     posterUrl: status.posterUrl,
     voicePreviewUrl: status.voicePreviewUrl,
+    voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
+    voiceCloningAvailable: false,
     source: "custom-sampling",
   };
 }
@@ -200,15 +210,36 @@ export function classifyTranscript(transcript) {
   return { safetyLevel: "normal", supportMode: "listen", emotion: ["neutral"], reasonCodes: ["GENERAL_LISTENING"] };
 }
 
-export function buildReply(decision) {
+function shortConversationTopic(value, maximumLength = 28) {
+  const normalized = String(value ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[「」]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return "";
+  return normalized.length <= maximumLength
+    ? normalized
+    : `${normalized.slice(0, maximumLength)}…`;
+}
+
+export function buildReply(decision, transcript = "", history = []) {
+  const currentTopic = shortConversationTopic(transcript);
+  const priorMessage = Array.isArray(history)
+    ? [...history].reverse().find((message) => message?.role === "user" && String(message.content ?? "").trim())
+    : null;
+  const priorTopic = shortConversationTopic(priorMessage?.content);
+  const continuity = priorTopic && priorTopic !== currentTopic
+    ? `さっきの「${priorTopic}」のお話の続きだね。`
+    : "";
+  const acknowledgment = currentTopic ? `「${currentTopic}」って教えてくれたんだね。` : "お話してくれてありがとう。";
   const replies = {
-    celebrate: "お話してくれてありがとう。できたこと、ちゃんと伝わったよ。いっしょに喜ぼうね。",
-    comfort: "お話してくれてありがとう。さみしかったんだね。ゆっくり息をして、そばの大人といっしょにいようね。",
-    calm: "お話してくれてありがとう。そう思ってもいいんだよ。ゆっくり息をしてみようね。",
-    encourage: "お話してくれてありがとう。がんばったこと、ちゃんと伝わったよ。次の一歩をいっしょに考えようね。",
-    transition: "お話してくれてありがとう。離れるのはさみしいよね。そばのおとなといっしょに、次にすることを一つだけ決めようね。",
-    basic_need: "お話してくれてありがとう。からだのことは大切だよ。そばのおとなに伝えて、いっしょに確かめてもらおうね。",
-    listen: "お話してくれてありがとう。あなたのお話を、ちゃんと聞いているよ。",
+    celebrate: `${continuity}${acknowledgment}できたこと、ちゃんと伝わったよ。いっしょに喜ぼうね。`,
+    comfort: `${continuity}${acknowledgment}さみしかったね。ゆっくり息をして、そばの大人といっしょにいようね。`,
+    calm: `${continuity}${acknowledgment}そう思ってもいいんだよ。いっしょにゆっくり息をしてみようね。`,
+    encourage: `${continuity}${acknowledgment}がんばったこと、ちゃんと伝わったよ。次の一歩をいっしょに考えようね。`,
+    transition: `${continuity}${acknowledgment}離れるのはさみしいよね。そばの大人と、次にすることを一つ決めようね。`,
+    basic_need: `${continuity}${acknowledgment}からだのことは大切だよ。そばの大人に伝えて、いっしょに確かめてもらおうね。`,
+    listen: `${continuity}${acknowledgment}そのお話、もう少し聞かせてくれる？`,
     clarify: "うまく聞き取れなかったよ。そばの大人と、もう一度お話してみようね。",
   };
   return replies[decision.supportMode] ?? replies.listen;
@@ -283,6 +314,36 @@ function addTechnicalLog(entry) {
   technicalLogs.length = Math.min(technicalLogs.length, 50);
 }
 
+function conversationStorageKey(guardianProfileId, conversationId) {
+  return `${guardianProfileId || "legacy"}:${conversationId}`;
+}
+
+function readConversationHistory(guardianProfileId, conversationId, now = Date.now()) {
+  const key = conversationStorageKey(guardianProfileId, conversationId);
+  const conversation = conversations.get(key);
+  if (!conversation || now - conversation.updatedAt > conversationTtlMs) {
+    conversations.delete(key);
+    return [];
+  }
+  return conversation.turns.flatMap((turn) => [
+    { role: "user", content: turn.childMessage },
+    { role: "assistant", content: turn.guardianReply },
+  ]);
+}
+
+function rememberConversationTurn(guardianProfileId, conversationId, childMessage, guardianReply, now = Date.now()) {
+  const key = conversationStorageKey(guardianProfileId, conversationId);
+  const previous = conversations.get(key);
+  const turns = previous && now - previous.updatedAt <= conversationTtlMs
+    ? [...previous.turns]
+    : [];
+  turns.push({ childMessage, guardianReply });
+  conversations.set(key, {
+    updatedAt: now,
+    turns: turns.slice(-MAX_CONVERSATION_TURNS),
+  });
+}
+
 function purgeExpiredData(now = Date.now()) {
   const oldestAllowed = now - retentionMs;
   for (const [requestId, record] of responses) {
@@ -293,6 +354,9 @@ function purgeExpiredData(now = Date.now()) {
   }
   while (technicalLogs.length && Date.parse(technicalLogs.at(-1).at) < oldestAllowed) {
     technicalLogs.pop();
+  }
+  for (const [key, conversation] of conversations) {
+    if (now - conversation.updatedAt > conversationTtlMs) conversations.delete(key);
   }
 }
 
@@ -371,7 +435,11 @@ async function finishResponse(requestId, input, startedAt) {
     return;
   }
 
-  const routed = await routerProvider.classifyAndReply({ transcript: input.confirmedTranscript });
+  const conversationHistory = readConversationHistory(input.guardianProfileId, input.conversationId);
+  const routed = await routerProvider.classifyAndReply({
+    transcript: input.confirmedTranscript,
+    history: conversationHistory,
+  });
   const decision = routed.decision;
   if (!routed.ok || !decision || decision.safetyLevel !== "normal") {
     const safeDecision = decision ?? {
@@ -425,17 +493,20 @@ async function finishResponse(requestId, input, startedAt) {
       : "video_failure";
     responseBundle = await mediaProvider.generate({
       decision,
-      replyText: registeredSample ? guardianSamplingPhrase : decision.replyText,
+      replyText: decision.replyText,
       consentValid: true,
       faultMode: input.demoFault || defaultFault,
       posterUrl: registeredSample?.photoUrl,
       audioUrl: registeredSample?.voicePreviewUrl,
+      recordedAudioText: registeredSample ? guardianSamplingRecordingText : null,
       guardianSampling: registeredSample ? {
         configured: true,
         photoUsed: true,
         voiceSampleRegistered: true,
-        voiceUsed: true,
-        voiceFallback: null,
+        voiceSamplePurpose: "sampling-confirmation",
+        voiceUsed: false,
+        voiceCloningUsed: false,
+        voiceFallback: "dynamic-tts",
       } : null,
     });
   } catch (error) {
@@ -461,13 +532,21 @@ async function finishResponse(requestId, input, startedAt) {
     supportMode: decision.supportMode,
     emotion: decision.emotion,
     replyText: responseBundle.parentLike
-      ? registeredSample ? guardianSamplingPhrase : decision.replyText
+      ? decision.replyText
       : null,
     responseBundle,
     bundle: responseBundle,
     completedAt: new Date().toISOString(),
   };
   responses.set(requestId, result);
+  if (responseBundle.parentLike) {
+    rememberConversationTurn(
+      input.guardianProfileId,
+      input.conversationId,
+      input.confirmedTranscript,
+      decision.replyText,
+    );
+  }
   addTechnicalLog({
     requestId,
     route: responseBundle.fallbackLevel === 4 ? "neutral_fallback" : "guardian_media",
@@ -636,6 +715,15 @@ async function apiHandler(req, res, url) {
         sendJson(res, 400, { error: "RESPONSE_IDENTIFIERS_REQUIRED" });
         return true;
       }
+      if (input.conversationId != null && (
+        typeof input.conversationId !== "string"
+        || !input.conversationId.trim()
+        || input.conversationId.trim().length > 128
+      )) {
+        sendJson(res, 400, { error: "CONVERSATION_ID_INVALID" });
+        return true;
+      }
+      input.conversationId = input.conversationId?.trim() || input.sessionId.trim();
       const key = `${guardianProfileId || "legacy"}:${String(input.idempotencyKey || `${input.sessionId}:${input.transcriptId}`)}`;
       if (idempotency.has(key)) {
         sendJson(res, 202, responses.get(idempotency.get(key)));
@@ -646,6 +734,7 @@ async function apiHandler(req, res, url) {
         requestId,
         status: "PENDING",
         guardianProfileId,
+        conversationId: input.conversationId,
         createdAt: new Date().toISOString(),
       };
       responses.set(requestId, record);

@@ -23,6 +23,7 @@ const responseVideo = document.querySelector("#responseVideo");
 const responseAudio = document.querySelector("#responseAudio");
 const guardianPortrait = document.querySelector("#guardianPortrait");
 const responsePoster = document.querySelector("#responsePoster");
+const responseEyes = document.querySelector("#responseEyes");
 const responseMouth = document.querySelector("#responseMouth");
 const neutralMedia = document.querySelector("#neutralMedia");
 const mediaStage = document.querySelector("#mediaStage");
@@ -84,6 +85,7 @@ function profileFetch(url, options = {}) {
 const state = {
   screen: "setup",
   sessionId: crypto.randomUUID(),
+  conversationId: crypto.randomUUID(),
   consent: null,
   mediaRecorder: null,
   mediaStream: null,
@@ -109,6 +111,7 @@ const state = {
   responseAudioSource: null,
   responseAnalyser: null,
   portraitAnimationFrame: null,
+  responseUtterance: null,
 };
 
 for (let index = 0; index < 27; index += 1) {
@@ -447,6 +450,7 @@ async function pollResponse(requestId) {
     const response = await profileFetch(`/api/responses/${encodeURIComponent(requestId)}`, { signal: state.pollAbort.signal });
     const data = await response.json();
     if (data.status === "READY") {
+      state.conversationId = data.conversationId ?? state.conversationId;
       state.response = data;
       renderDecision(data);
       await prepareResponse(data);
@@ -480,6 +484,7 @@ async function createResponse() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         sessionId: state.sessionId,
+        conversationId: state.conversationId,
         transcriptId: state.transcriptId,
         confirmedTranscript,
         consentId: state.consent?.consentId,
@@ -491,6 +496,7 @@ async function createResponse() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "REQUEST_FAILED");
     state.requestId = data.requestId;
+    state.conversationId = data.conversationId ?? state.conversationId;
     await pollResponse(data.requestId);
   } catch (error) {
     if (error.name === "AbortError") return;
@@ -532,6 +538,7 @@ async function prepareResponse(data) {
   subtitle.textContent = bundle.subtitle;
   responseTitle.textContent = bundle.parentLike === false ? "いっしょに確認しよう" : "おへんじがとどいたよ";
   responsePoster.src = bundle.posterUrl ?? "";
+  responseEyes.src = bundle.posterUrl ?? "";
   responseMouth.src = bundle.posterUrl ?? "";
   guardianPortrait.hidden = Boolean(bundle.videoUrl) || !bundle.posterUrl;
   responseVideo.hidden = !bundle.videoUrl;
@@ -556,14 +563,8 @@ async function prepareResponse(data) {
   }
 }
 
-function isSampledStillAudio(bundle = state.response?.responseBundle) {
-  return Boolean(
-    bundle?.guardianSampling?.configured
-    && bundle.parentLike
-    && bundle.posterUrl
-    && bundle.audioUrl
-    && !bundle.videoUrl
-  );
+function isAnimatedGuardianPortrait(bundle = state.response?.responseBundle) {
+  return Boolean(bundle?.posterUrl && !bundle.videoUrl);
 }
 
 function stopPortraitAnimation() {
@@ -572,13 +573,17 @@ function stopPortraitAnimation() {
   mediaStage.classList.remove("is-portrait-animated", "is-audio-fallback");
   mediaStage.style.removeProperty("--mouth-shift");
   mediaStage.style.removeProperty("--mouth-scale");
+  mediaStage.style.removeProperty("--portrait-tilt");
 }
 
-async function startPortraitAnimation() {
+async function startPortraitAnimation({ syntheticSpeech = false } = {}) {
   stopPortraitAnimation();
-  if (!isSampledStillAudio() || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const eligible = isAnimatedGuardianPortrait();
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!eligible || reducedMotion) return;
 
   mediaStage.classList.add("is-portrait-animated", "is-audio-fallback");
+  if (syntheticSpeech) return;
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
@@ -595,7 +600,7 @@ async function startPortraitAnimation() {
     const samples = new Uint8Array(state.responseAnalyser.frequencyBinCount);
     mediaStage.classList.remove("is-audio-fallback");
     const updateMouth = () => {
-      if (responseAudio.paused || responseAudio.ended || !isSampledStillAudio()) {
+      if (responseAudio.paused || responseAudio.ended || !isAnimatedGuardianPortrait()) {
         stopPortraitAnimation();
         return;
       }
@@ -603,8 +608,9 @@ async function startPortraitAnimation() {
       const speechBins = samples.subarray(1, Math.min(42, samples.length));
       const average = speechBins.reduce((sum, value) => sum + value, 0) / speechBins.length;
       const energy = Math.max(0, Math.min(1, (average - 14) / 92));
-      mediaStage.style.setProperty("--mouth-shift", `${(energy * 4.5).toFixed(2)}px`);
-      mediaStage.style.setProperty("--mouth-scale", (1 + energy * .11).toFixed(3));
+      mediaStage.style.setProperty("--mouth-shift", `${(energy * 8).toFixed(2)}px`);
+      mediaStage.style.setProperty("--mouth-scale", (1 + energy * .3).toFixed(3));
+      mediaStage.style.setProperty("--portrait-tilt", `${((energy - .5) * 1.2).toFixed(2)}deg`);
       state.portraitAnimationFrame = requestAnimationFrame(updateMouth);
     };
     updateMouth();
@@ -615,6 +621,7 @@ async function startPortraitAnimation() {
 
 function stopSpeech() {
   speechSynthesis.cancel();
+  state.responseUtterance = null;
   responseVideo.pause();
   responseAudio.pause();
   stopPortraitAnimation();
@@ -626,6 +633,9 @@ async function playResponse() {
   stopSpeech();
   const bundle = state.response.responseBundle;
   mediaStage.classList.add("is-speaking");
+  if (isAnimatedGuardianPortrait(bundle)) {
+    startPortraitAnimation({ syntheticSpeech: true });
+  }
   if (bundle.videoUrl) {
     responseVideo.currentTime = 0;
     responseVideo.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
@@ -652,11 +662,21 @@ async function playResponse() {
     return;
   }
   const utterance = new SpeechSynthesisUtterance(bundle.subtitle);
+  state.responseUtterance = utterance;
   utterance.lang = "ja-JP";
   utterance.rate = 0.86;
   utterance.pitch = 1.04;
-  utterance.addEventListener("end", () => mediaStage.classList.remove("is-speaking"), { once: true });
-  utterance.addEventListener("error", () => mediaStage.classList.remove("is-speaking"), { once: true });
+  utterance.addEventListener("start", () => startPortraitAnimation({ syntheticSpeech: true }), { once: true });
+  utterance.addEventListener("end", () => {
+    state.responseUtterance = null;
+    stopPortraitAnimation();
+    mediaStage.classList.remove("is-speaking");
+  }, { once: true });
+  utterance.addEventListener("error", () => {
+    state.responseUtterance = null;
+    stopPortraitAnimation();
+    mediaStage.classList.remove("is-speaking");
+  }, { once: true });
   speechSynthesis.speak(utterance);
 }
 
@@ -690,6 +710,7 @@ function resetFlow() {
   stopTracks();
   state.pollAbort?.abort();
   state.sessionId = crypto.randomUUID();
+  state.conversationId = crypto.randomUUID();
   state.transcriptId = null;
   if (state.requestId) profileFetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
   state.requestId = null;
@@ -697,6 +718,8 @@ function resetFlow() {
   transcriptInput.value = "";
   subtitle.textContent = "";
   responsePoster.removeAttribute("src");
+  responseEyes.removeAttribute("src");
+  responseMouth.removeAttribute("src");
   responseVideo.removeAttribute("src");
   responseVideo.load();
   responseAudio.removeAttribute("src");
@@ -709,13 +732,14 @@ function resetFlow() {
 function continueTalking() {
   stopSpeech();
   if (state.requestId) profileFetch(`/api/responses/${encodeURIComponent(state.requestId)}`, { method: "DELETE", keepalive: true }).catch(() => {});
-  state.sessionId = crypto.randomUUID();
   state.transcriptId = null;
   state.requestId = null;
   state.response = null;
   transcriptInput.value = "";
   subtitle.textContent = "";
   responsePoster.removeAttribute("src");
+  responseEyes.removeAttribute("src");
+  responseMouth.removeAttribute("src");
   responseVideo.removeAttribute("src");
   responseVideo.load();
   responseAudio.removeAttribute("src");
@@ -806,12 +830,16 @@ backButton.addEventListener("click", () => {
   else resetFlow();
 });
 window.addEventListener("pagehide", () => { stopTracks(); stopSampleTracks(); stopSpeech(); });
-responseAudio.addEventListener("pause", stopPortraitAnimation);
+responseAudio.addEventListener("pause", () => {
+  if (state.response?.responseBundle?.audioUrl) stopPortraitAnimation();
+});
 responseAudio.addEventListener("ended", () => {
+  if (!state.response?.responseBundle?.audioUrl) return;
   stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 });
 responseAudio.addEventListener("error", () => {
+  if (!state.response?.responseBundle?.audioUrl) return;
   stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 });

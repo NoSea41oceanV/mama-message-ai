@@ -66,6 +66,31 @@ test("OrcaRouter demo mode never sends externally even when a key exists", async
   assert.equal(result.metadata.provider, "local");
 });
 
+test("OrcaRouter demo mode passes bounded conversation history to the reply builder", async () => {
+  let receivedHistory;
+  const provider = createOrcaRouterProvider({
+    env: { ROUTER_PROVIDER: "demo" },
+    localClassifier: () => ({
+      safetyLevel: "normal",
+      supportMode: "celebrate",
+      emotion: ["joy"],
+      reasonCodes: ["LOCAL_CLASSIFIER"],
+    }),
+    localReplyBuilder: (_decision, transcript, history) => {
+      receivedHistory = history;
+      return `さっきのおうちの続きだね。${transcript}`;
+    },
+  });
+  const history = [
+    { role: "user", content: "ブロックでおうちを作ったよ" },
+    { role: "assistant", content: "できたこと、ちゃんと伝わったよ。" },
+  ];
+  const result = await provider.classifyAndReply({ transcript: "こんどは庭も作ったよ", history });
+  assert.deepEqual(receivedHistory, history);
+  assert.match(result.replyText, /おうちの続き/);
+  assert.equal(result.metadata.historyMessages, 2);
+});
+
 test("OrcaRouter sends strict structured output and captures metadata", async () => {
   let request;
   const provider = createOrcaRouterProvider({
@@ -86,7 +111,13 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
       });
     },
   });
-  const result = await provider.classifyAndReply("ブロックでおうちを作れたよ");
+  const result = await provider.classifyAndReply({
+    transcript: "ブロックでおうちを作れたよ",
+    history: [
+      { role: "user", content: "きのうはタワーを作ったよ" },
+      { role: "assistant", content: "高くできたんだね。" },
+    ],
+  });
   assert.equal(request.url, "https://api.orcarouter.ai/v1/chat/completions");
   assert.equal(request.init.headers.authorization, "Bearer secret");
   assert.equal(request.body.model, "orcarouter/auto");
@@ -94,6 +125,11 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.equal(request.body.response_format.json_schema.strict, true);
   assert.equal(request.body.response_format.json_schema.schema.additionalProperties, false);
   assert.deepEqual(request.body.response_format.json_schema.schema.required, Object.keys(validOrcaResponse));
+  assert.deepEqual(request.body.messages.slice(1), [
+    { role: "user", content: "きのうはタワーを作ったよ" },
+    { role: "assistant", content: "高くできたんだね。" },
+    { role: "user", content: "ブロックでおうちを作れたよ" },
+  ]);
   assert.equal(result.replyText, validOrcaResponse.replyText);
   assert.equal(result.metadata.resolvedModel, "provider/header-model");
   assert.equal(result.metadata.usage.total_tokens, 50);
@@ -266,6 +302,32 @@ test("LEVEL 3 can use a prepared audio file instead of browser speech", async ()
   assert.equal(bundle.audioUrl, "/audio/comfort.wav");
   assert.equal(bundle.speechSynthesis, false);
   assert.equal(isMediaBundleReady(bundle), true);
+});
+
+test("LEVEL 3 does not play a registered sample when its text differs from the reply", async () => {
+  const provider = createMediaProvider({ env: { MEDIA_PROVIDER: "demo" } });
+  const bundle = await provider.generate({
+    safetyLevel: "normal",
+    consentValid: true,
+    replyText: "庭も作れたんだね。すてきだよ。",
+    posterUrl: "/private/guardian.png",
+    audioUrl: "/private/sampling.wav",
+    recordedAudioText: "お話ししてくれてありがとう。いつも応援しているよ。",
+    guardianSampling: {
+      configured: true,
+      photoUsed: true,
+      voiceSampleRegistered: true,
+    },
+  });
+  assert.equal(bundle.fallbackLevel, 3);
+  assert.equal(bundle.posterUrl, "/private/guardian.png");
+  assert.equal(bundle.audioUrl, null);
+  assert.equal(bundle.speechSynthesis, true);
+  assert.equal(bundle.guardianSampling.voiceSamplePurpose, "sampling-confirmation");
+  assert.equal(bundle.guardianSampling.voiceSampleMatchesReply, false);
+  assert.equal(bundle.guardianSampling.voiceUsed, false);
+  assert.equal(bundle.guardianSampling.voiceCloningUsed, false);
+  assert.equal(bundle.guardianSampling.voiceFallback, "dynamic-tts");
 });
 
 test("media is forbidden for non-normal safety or invalid consent", async () => {

@@ -385,7 +385,7 @@ function renderSampling(sample) {
     sampleVoiceLabel.textContent = "登録済み・再生できます";
   } else if (!state.sampleVoiceBlob) {
     sampleVoicePreview.hidden = true;
-    sampleVoiceLabel.textContent = "10秒まで録音";
+    sampleVoiceLabel.textContent = "30秒〜2分録音";
   }
   faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
   voiceConsentCheck.checked = Boolean(sample?.voiceApproved && configured);

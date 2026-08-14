@@ -1,0 +1,66 @@
+[
+  {
+    "duration": 9,
+    "label": "AI HACK 2026",
+    "title": "おへんじ",
+    "subtitle": "離れていても、ひとりにしない",
+    "bullets": ["ベビーシッター同席家庭向けMVP", "子どもの声に、保護者らしい声と字幕で返答"],
+    "narration": "AI HACK 2026、おへんじ。保護者がそばにいない時間も、ベビーシッターと一緒にいる子どもの安心を支えるサービスです。"
+  },
+  {
+    "duration": 12,
+    "label": "CONVERSATION",
+    "title": "声で話して、複数往復",
+    "subtitle": "入力は音声。出力は動画・音声・字幕",
+    "bullets": ["OrcaRouterが返答・感情・安全性を構造化", "会話履歴を保ち、二往復目以降へ継続", "認識文は送信前に確認可能"],
+    "narration": "子どもの入力は音声です。認識結果を確認して送ると、OrcaRouterが返答、感情、安全性を構造化します。会話は一往復で終わらず、そのまま続けられます。"
+  },
+  {
+    "duration": 15,
+    "label": "VOICE CLONING",
+    "title": "アプリ内で本人声を作成",
+    "subtitle": "録音からElevenLabs Instant Voice CloneまでAPIで接続",
+    "bullets": ["本人が30秒〜2分録音", "外部送信・クローン作成へ独立して明示同意", "Voice IDはプロフィール別に暗号化保存", "設定画面でクローン音声をプレビュー"],
+    "narration": "設定画面では、本人が三十秒から二分録音します。外部送信とクローン作成への明示同意後、ElevenLabs APIで本人声を作成。Voice IDはプロフィール別に暗号化し、画面から短い音声を確認できます。"
+  },
+  {
+    "duration": 12,
+    "label": "PROVIDER CHOICE",
+    "title": "低コストでも性能を維持",
+    "subtitle": "役割ごとにサービスを分離",
+    "bullets": ["OrcaRouter：文字起こし・返答・安全判定", "ElevenLabs Flash：低遅延の本人声TTS", "OpenAI Custom Voice：将来使える選択肢として温存", "同一返答は30分キャッシュ"],
+    "narration": "役割は分離しています。OrcaRouterが会話を考え、ElevenLabs Flashが本人声を生成します。OpenAI Custom Voiceも将来用に残し、同じ返答音声はキャッシュして重複課金を防ぎます。"
+  },
+  {
+    "duration": 13,
+    "label": "SAFETY FIRST",
+    "title": "危険発話では生成しない",
+    "subtitle": "AIだけで抱えず、同席する大人へ引き継ぐ",
+    "bullets": ["危険・不確実・同意無効では音声API 0回", "D-IDも呼び出さない", "保護者メディアを返さない", "安全ルートを自動テスト"],
+    "narration": "危険な発話、不確実な判定、同意無効では、本人声音声もD-IDも生成しません。保護者メディアを出さず、すぐに同席する大人へ引き継ぎます。"
+  },
+  {
+    "duration": 12,
+    "label": "PRIVACY",
+    "title": "秘密と素材をGitへ出さない",
+    "subtitle": "保護者プロフィールごとに分離",
+    "bullets": ["写真・録音・生成動画はAES-256-GCMで暗号化", "音声は推測困難な短期URLで配信", ".env・.data・APIキーはGit対象外", "削除・再登録時は外部クローン削除も試行"],
+    "narration": "写真、録音、生成動画は暗号化し、プロフィールごとに分離します。APIキーや環境ファイル、保護者素材はGitへ追加しません。削除や再登録時は、外部の音声クローン削除も試みます。"
+  },
+  {
+    "duration": 11,
+    "label": "CURRENT LIMIT",
+    "title": "完全な口同期は次の段階",
+    "subtitle": "現行mainは待機動画＋動的音声＋字幕",
+    "bullets": ["登録時にD-ID待機動画を生成", "会話時は本人声音声を別再生", "発話ごとのD-ID試作は別ブランチ", "まだmainへ統合しない"],
+    "narration": "現在のメイン版は、登録時に作った待機動画へ、発話ごとの音声と字幕を重ねます。完全な口同期は未達です。発話ごとのD-ID試作は別ブランチに保ち、まだ統合しません。"
+  },
+  {
+    "duration": 9,
+    "label": "READY TO TEST",
+    "title": "テスター確認へ",
+    "subtitle": "agent/guardian-voice-cloning",
+    "bullets": ["自動テスト 70 / 70 成功", "通常会話2往復・危険発話・声質・待ち時間を実測", "問題なければmainへマージ"],
+    "narration": "実装はレビュー用ブランチへ公開済みで、自動テストは七十件すべて成功しています。次は本人同意のもと、二往復の会話、危険発話、声質と待ち時間を確認します。"
+  }
+]

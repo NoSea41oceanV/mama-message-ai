@@ -9,6 +9,7 @@
 node_modules/
 dist/
 build/
+sites-app/
 public/vendor/liveavatar-sdk.js
 public/vendor/daily-sdk.js
 public/vendor/daily-call-machine/

@@ -342,7 +342,18 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .celebration i:nth-child(5) { bottom: 110px; left: 14px; color: var(--coral); font-size: 22px; animation-delay: -1.6s; }
 .celebration i:nth-child(6) { bottom: 50px; right: 22px; color: var(--mint); font-size: 15px; animation-delay: -2s; }
 
-.screen[data-screen="response"] { overflow-y: auto; }
+.screen[data-screen="response"] { overflow: hidden; }
+.screen[data-screen="response"].is-active {
+  display: grid;
+  grid-template-rows: auto minmax(150px, 1fr) auto auto 184px auto;
+  align-items: start;
+}
+.screen[data-screen="response"].is-active .media-stage {
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: auto;
+}
 
 .media-stage {
   position: relative;
@@ -416,7 +427,7 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .voice-bars i { width: 4px; height: 8px; border-radius: 3px; background: var(--coral); }
 .media-stage.is-speaking .voice-bars i { animation: wave .45s ease-in-out infinite alternate; }
 .playback-controls { display: flex; justify-content: center; gap: 18px; margin: 0 0 17px; }
-.response-conversation { width: min(100%, 340px); margin: 0 auto 6px; padding: 14px; border: 2px solid #9bc7da; border-radius: 16px; background: rgb(255 255 255 / 94%); }
+.response-conversation { position: relative; width: min(100%, 340px); height: 184px; margin: 0 auto 6px; overflow: hidden; padding: 14px; border: 2px solid #9bc7da; border-radius: 16px; background: rgb(255 255 255 / 94%); }
 .response-conversation > p:first-child { margin: 0 0 10px; color: var(--ink); font-size: 14px; font-weight: 900; text-align: center; }
 .response-talk-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
 .response-talk-button { min-height: 50px; padding: 10px 14px; font-size: 15px; }
@@ -428,6 +439,16 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
 .response-transcript .action-row { margin-top: 10px; }
 .response-transcript .primary-button, .response-transcript .secondary-button { min-height: 43px; padding: 8px 10px; font-size: 13px; box-shadow: none; }
 .response-conversation .inline-status { margin: 7px 0 0; text-align: center; }
+.response-conversation.is-confirming > p:first-child { margin-bottom: 5px; font-size: 13px; }
+.response-conversation.is-confirming .response-talk-row,
+.response-conversation.is-confirming .response-demo-button { display: none; }
+.response-conversation.is-confirming .response-transcript { margin: 0; padding: 0; border: 0; }
+.response-conversation.is-confirming .response-transcript .field-label { margin-bottom: 3px; font-size: 11px; }
+.response-conversation.is-confirming .response-transcript textarea { height: 50px; padding: 6px 9px; font-size: 14px; line-height: 1.3; }
+.response-conversation.is-confirming .response-transcript .action-row { gap: 8px; margin-top: 6px; }
+.response-conversation.is-confirming .response-transcript .primary-button,
+.response-conversation.is-confirming .response-transcript .secondary-button { min-height: 36px; padding: 5px 8px; font-size: 12px; }
+.response-conversation.is-confirming .inline-status:empty { display: none; }
 
 .safety-screen { justify-content: center; background: var(--mint-soft); }
 .safety-screen::before { top: 30px; left: -75px; }

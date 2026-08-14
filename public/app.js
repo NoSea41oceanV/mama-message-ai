@@ -32,6 +32,7 @@ const playbackControls = document.querySelector("#playbackControls");
 const replayButton = document.querySelector("#replayButton");
 const soundButton = document.querySelector("#soundButton");
 const finishButton = document.querySelector("#finishButton");
+const responseConversation = document.querySelector(".response-conversation");
 const talkAgainButton = document.querySelector("#talkAgainButton");
 const responseTalkLead = document.querySelector("#responseTalkLead");
 const responseTimer = document.querySelector("#responseTimer");
@@ -182,6 +183,11 @@ function setRecordState(active) {
     recordActionLabel.textContent = active ? "おわったら、ここをおしてね" : "おしておはなし";
     recordButton.setAttribute("aria-label", active ? "録音を停止する" : "録音を開始する");
   }
+}
+
+function setResponseTranscriptVisible(visible) {
+  responseTranscriptConfirm.hidden = !visible;
+  responseConversation.classList.toggle("is-confirming", visible);
 }
 
 function stopTracks() {
@@ -790,7 +796,7 @@ async function transcribe({ blob = null, useDemo = false, stayOnResponse = false
     state.transcriptId = data.transcriptId;
     if (stayOnResponse) {
       responseTranscriptInput.value = data.transcript;
-      responseTranscriptConfirm.hidden = false;
+      setResponseTranscriptVisible(true);
       responseTalkLead.textContent = "こう聞こえたよ。送る前に確認してね";
       responseTranscriptInput.focus();
     } else {
@@ -831,7 +837,7 @@ async function startRecording(context = "record") {
   if (stayOnResponse) {
     stopSpeech();
     if (state.liveAvatarStreamReady) state.liveAvatarSession?.startListening();
-    responseTranscriptConfirm.hidden = true;
+    setResponseTranscriptVisible(false);
     responseTranscriptInput.value = "";
   }
   try {
@@ -866,7 +872,7 @@ function prepareInlineTurn() {
   }
   state.transcriptId = null;
   state.requestId = null;
-  responseTranscriptConfirm.hidden = true;
+  setResponseTranscriptVisible(false);
   responseTranscriptInput.value = "";
   responseRecordError.textContent = "";
 }
@@ -874,7 +880,7 @@ function prepareInlineTurn() {
 function resetResponseComposer() {
   state.recordingContext = "response";
   setRecordState(false);
-  responseTranscriptConfirm.hidden = true;
+  setResponseTranscriptVisible(false);
   responseTranscriptInput.value = "";
   responseTimer.textContent = "00:00";
   responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
@@ -1619,7 +1625,7 @@ function resetFlow() {
   timer.textContent = "00:00";
   state.recordingContext = "record";
   setRecordState(false);
-  responseTranscriptConfirm.hidden = true;
+  setResponseTranscriptVisible(false);
   responseTranscriptInput.value = "";
   responseTimer.textContent = "00:00";
   responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
@@ -1731,7 +1737,7 @@ responseDemoAudioButton.addEventListener("click", () => {
   transcribe({ useDemo: true, stayOnResponse: true });
 });
 responseRetryButton.addEventListener("click", () => {
-  responseTranscriptConfirm.hidden = true;
+  setResponseTranscriptVisible(false);
   responseTranscriptInput.value = "";
   responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
   talkAgainButton.focus();

@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { createOrcaRouterProvider } from "../lib/providers/orcarouter.mjs";
+import {
+  KlingVideoProviderError,
+  createKlingVideoProvider,
+} from "../lib/providers/kling-video.mjs";
 import { SttProviderError, createSttProvider } from "../lib/providers/stt.mjs";
 import {
   DEMO_FAULT_MODES,
@@ -19,6 +23,83 @@ const validOrcaResponse = {
   voiceTone: "bright",
   expression: "smiling",
 };
+
+test("Kling submits raw-base64 image-to-video defaults without a paid call", async () => {
+  const requests = [];
+  const provider = createKlingVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "kling",
+      ORCAROUTER_API_KEY: "test-secret",
+      ORCAROUTER_BASE_URL: "https://api.orcarouter.test/v1",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+      return new Response(JSON.stringify({ task_id: "task-1", status: "queued" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  const imageBase64 = Buffer.from("guardian-photo").toString("base64");
+  const task = await provider.createTask({ imageBase64 });
+  assert.equal(task.taskId, "task-1");
+  assert.equal(task.status, "queued");
+  assert.equal(requests[0].url, "https://api.orcarouter.test/v1/video/generations");
+  assert.equal(requests[0].init.headers.authorization, "Bearer test-secret");
+  assert.equal(requests[0].body.model, "kling/kling-v3");
+  assert.equal(requests[0].body.image, imageBase64);
+  assert.deepEqual(requests[0].body.metadata, {
+    mode: "std",
+    duration: "5",
+    sound: "off",
+  });
+  assert.equal(requests[0].body.image.startsWith("data:"), false);
+  assert.doesNotMatch(requests[0].body.prompt, /<<<image_1>>>/);
+  assert.doesNotMatch(requests[0].body.prompt, /child/i);
+  assert.match(requests[0].body.prompt, /stationary/i);
+  assert.match(requests[0].body.prompt, /exactly one person/i);
+});
+
+test("Kling polls task state and extracts the signed result URL", async () => {
+  let requestedUrl;
+  const provider = createKlingVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "kling", ORCAROUTER_API_KEY: "test-secret" },
+    fetchImpl: async (url) => {
+      requestedUrl = url;
+      return new Response(JSON.stringify({
+        data: {
+          task_id: "task/with spaces",
+          status: "SUCCESS",
+          result_url: "https://signed.example.test/result.mp4",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const task = await provider.getTask("task/with spaces");
+  assert.equal(requestedUrl, "https://api.orcarouter.ai/v1/video/generations/task%2Fwith%20spaces");
+  assert.deepEqual(task, {
+    taskId: "task/with spaces",
+    status: "ready",
+    videoUrl: "https://signed.example.test/result.mp4",
+  });
+});
+
+test("Kling exposes typed provider failures without response bodies", async () => {
+  const provider = createKlingVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "kling", ORCAROUTER_API_KEY: "test-secret" },
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: { code: "access_denied", message: "sensitive upstream details" },
+    }), { status: 503, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    provider.getTask("task-1"),
+    (error) => error instanceof KlingVideoProviderError
+      && error.code === "KLING_VIDEO_HTTP_ERROR"
+      && error.status === 503
+      && error.providerCode === "access_denied"
+      && !error.message.includes("sensitive upstream details"),
+  );
+});
 
 test("OrcaRouter uses injected local functions without an API key", async () => {
   let fetchCalls = 0;

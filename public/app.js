@@ -56,6 +56,11 @@ const voiceConsentCheck = document.querySelector("#voiceConsentCheck");
 const saveSampleButton = document.querySelector("#saveSampleButton");
 const deleteSampleButton = document.querySelector("#deleteSampleButton");
 const samplingStatus = document.querySelector("#samplingStatus");
+const sampleVideoBadge = document.querySelector("#sampleVideoBadge");
+const sampleVideoPreview = document.querySelector("#sampleVideoPreview");
+const videoConsentCheck = document.querySelector("#videoConsentCheck");
+const generateVideoButton = document.querySelector("#generateVideoButton");
+const videoGenerationStatus = document.querySelector("#videoGenerationStatus");
 
 const guardianProfileStorageKey = "guardian-ai.profile-id.v1";
 let guardianProfileId;
@@ -107,6 +112,10 @@ const state = {
   sampleRecordStartedAt: 0,
   sampleRecordTimer: null,
   sampleAutoStopTimer: null,
+  videoGeneration: null,
+  videoGenerationBusy: false,
+  videoGenerationPollingJobId: null,
+  videoGenerationPollAbort: null,
   responseAudioContext: null,
   responseAudioSource: null,
   responseAnalyser: null,
@@ -269,6 +278,82 @@ async function startSampleRecording() {
   }
 }
 
+function normalizeVideoGeneration(value = {}) {
+  const source = value?.videoGeneration ?? value?.generatedVideo ?? value ?? {};
+  const videoUrl = source.videoUrl ?? source.generatedVideoUrl ?? value?.generatedVideoUrl ?? null;
+  const rawStatus = String(source.status ?? source.state ?? value?.generatedVideoStatus ?? "not_started")
+    .trim().toLowerCase().replace(/[\s-]+/g, "_");
+  let status = rawStatus;
+  if (videoUrl) status = "ready";
+  else if (["pending", "submitted", "starting"].includes(status)) status = "queued";
+  else if (["running", "generating", "in_progress"].includes(status)) status = "processing";
+  else if (["complete", "completed", "succeeded", "success"].includes(status)) status = "ready";
+  else if (["error", "cancelled", "canceled"].includes(status)) status = "failed";
+  if (!["not_started", "queued", "processing", "ready", "failed", "unavailable"].includes(status)) {
+    status = "not_started";
+  }
+  return {
+    ...source,
+    status,
+    videoUrl,
+    jobId: source.jobId ?? source.id ?? value?.jobId ?? null,
+    message: source.message ?? source.error ?? value?.message ?? null,
+  };
+}
+
+function videoStatusLabel(status) {
+  return {
+    not_started: "未作成",
+    queued: "受付済み",
+    processing: "生成中",
+    ready: "完成",
+    failed: "要再試行",
+    unavailable: "利用不可",
+  }[status] ?? "未作成";
+}
+
+function friendlyVideoFailureMessage(message) {
+  const detail = String(message ?? "");
+  if (detail.includes("HTTP 403")) {
+    return "OrcaRouterでKling動画が拒否されました。ワークスペース残高と、プロモーションクレジットの動画利用可否を確認してください。";
+  }
+  if (detail.includes("HTTP 401")) return "OrcaRouterのAPIキーを確認してください。";
+  if (detail.includes("HTTP 429")) return "動画生成が混み合っています。少し待ってからもう一度お試しください。";
+  return detail || "動画を生成できませんでした。もう一度お試しください。";
+}
+
+function renderVideoGeneration(value = state.sample) {
+  const generation = normalizeVideoGeneration(value);
+  state.videoGeneration = generation;
+  const active = Boolean(state.sample?.configured && state.sample?.active);
+  const working = state.videoGenerationBusy || ["queued", "processing"].includes(generation.status);
+  sampleVideoBadge.textContent = videoStatusLabel(generation.status);
+  sampleVideoBadge.classList.toggle("is-ready", generation.status === "ready");
+  sampleVideoBadge.classList.toggle("is-progress", working);
+  sampleVideoBadge.classList.toggle("is-failed", generation.status === "failed");
+  videoConsentCheck.disabled = !active || working;
+  generateVideoButton.disabled = !active || !videoConsentCheck.checked || working;
+  generateVideoButton.textContent = generation.status === "ready" ? "返信動画を作り直す" : "返信動画をつくる";
+
+  if (generation.videoUrl) {
+    if (sampleVideoPreview.src !== new URL(generation.videoUrl, location.href).href) {
+      sampleVideoPreview.src = generation.videoUrl;
+    }
+    sampleVideoPreview.hidden = false;
+  } else {
+    sampleVideoPreview.hidden = true;
+    sampleVideoPreview.removeAttribute("src");
+    sampleVideoPreview.load();
+  }
+
+  if (generation.status === "queued") videoGenerationStatus.textContent = "動画生成を受け付けました。順番を待っています。";
+  else if (generation.status === "processing") videoGenerationStatus.textContent = "保護者の返信動画を生成しています。画面を閉じても処理は続きます。";
+  else if (generation.status === "ready") videoGenerationStatus.textContent = "実動画を使う準備ができました。次の返答から再生されます。";
+  else if (generation.status === "failed") videoGenerationStatus.textContent = friendlyVideoFailureMessage(generation.message);
+  else if (generation.status === "unavailable") videoGenerationStatus.textContent = generation.message || "動画生成サービスを利用できません。接続設定を確認してください。";
+  else videoGenerationStatus.textContent = active ? "登録写真から返信動画を作成できます。" : "先に写真と声を登録してください。";
+}
+
 function renderSampling(sample) {
   state.sample = sample;
   const configured = Boolean(sample?.configured);
@@ -294,6 +379,7 @@ function renderSampling(sample) {
   }
   faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
   voiceConsentCheck.checked = Boolean(sample?.voiceApproved && configured);
+  renderVideoGeneration(sample);
 }
 
 async function loadSampling() {
@@ -301,6 +387,10 @@ async function loadSampling() {
   if (!response.ok) throw new Error("登録状態を確認できませんでした");
   const sample = await response.json();
   renderSampling(sample);
+  const generation = normalizeVideoGeneration(sample);
+  if (["queued", "processing"].includes(generation.status) && generation.jobId) {
+    resumeSamplingVideoPolling(generation.jobId);
+  }
   return sample;
 }
 
@@ -347,13 +437,104 @@ async function saveSampling() {
     state.samplePhoto = null;
     state.sampleVoiceBlob = null;
     state.sampleVoiceDurationSeconds = null;
+    videoConsentCheck.checked = false;
     renderSampling(data);
     await refreshConsent();
-    samplingStatus.textContent = "登録しました。次の返答からこの写真を使います。";
+    samplingStatus.textContent = "登録しました。続けて返信動画を作成してください。";
   } catch (error) {
     samplingStatus.textContent = error.message;
   } finally {
     saveSampleButton.disabled = false;
+  }
+}
+
+function delayWithSignal(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, milliseconds);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    }, { once: true });
+  });
+}
+
+async function pollSamplingVideo(jobId) {
+  state.videoGenerationPollAbort?.abort();
+  state.videoGenerationPollAbort = new AbortController();
+  const signal = state.videoGenerationPollAbort.signal;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 180000) {
+    const response = await profileFetch(`/api/sampling/video/${encodeURIComponent(jobId)}`, { signal });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "動画の生成状況を確認できませんでした");
+    const generation = normalizeVideoGeneration(data);
+    renderVideoGeneration(generation);
+    if (generation.status === "ready") {
+      await loadSampling();
+      return;
+    }
+    if (["failed", "unavailable"].includes(generation.status)) {
+      throw new Error(generation.message || "動画を生成できませんでした");
+    }
+    await delayWithSignal(2500, signal);
+  }
+  throw new Error("動画生成が続いています。大人向け画面を開くと進捗を再確認できます。");
+}
+
+function resumeSamplingVideoPolling(jobId) {
+  if (!jobId || state.videoGenerationPollingJobId === jobId) return;
+  state.videoGenerationPollingJobId = jobId;
+  state.videoGenerationBusy = true;
+  renderVideoGeneration(state.videoGeneration);
+  void pollSamplingVideo(jobId)
+    .catch((error) => {
+      if (error.name !== "AbortError") {
+        state.videoGeneration = { ...state.videoGeneration, status: "failed", message: error.message };
+      }
+    })
+    .finally(() => {
+      if (state.videoGenerationPollingJobId === jobId) state.videoGenerationPollingJobId = null;
+      state.videoGenerationBusy = false;
+      renderVideoGeneration(state.videoGeneration);
+    });
+}
+
+async function generateSamplingVideo() {
+  if (!state.sample?.configured || !state.sample?.active) {
+    videoGenerationStatus.textContent = "先に写真と声を登録してください。";
+    return;
+  }
+  if (!videoConsentCheck.checked) {
+    videoGenerationStatus.textContent = "外部の動画生成サービスへ写真を送信する同意を確認してください。";
+    return;
+  }
+  state.videoGenerationBusy = true;
+  renderVideoGeneration(state.videoGeneration);
+  videoGenerationStatus.textContent = "動画生成を申し込んでいます。";
+  try {
+    const response = await profileFetch("/api/sampling/video", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ externalProcessingApproved: true }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "動画生成を開始できませんでした");
+    const generation = normalizeVideoGeneration(data);
+    renderVideoGeneration(generation);
+    if (generation.status === "ready") {
+      await loadSampling();
+      return;
+    }
+    if (!generation.jobId) throw new Error("動画生成ジョブを確認できませんでした");
+    state.videoGenerationPollingJobId = generation.jobId;
+    await pollSamplingVideo(generation.jobId);
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    state.videoGeneration = { ...state.videoGeneration, status: "failed", message: error.message };
+  } finally {
+    state.videoGenerationPollingJobId = null;
+    state.videoGenerationBusy = false;
+    renderVideoGeneration(state.videoGeneration);
   }
 }
 
@@ -368,6 +549,8 @@ async function deleteSampling() {
     state.samplePhoto = null;
     state.sampleVoiceBlob = null;
     state.sampleVoiceDurationSeconds = null;
+    state.videoGenerationPollAbort?.abort();
+    videoConsentCheck.checked = false;
     samplePhotoInput.value = "";
     sampleVoiceInput.value = "";
     renderSampling(data);
@@ -549,6 +732,8 @@ async function prepareResponse(data) {
   if (bundle.videoUrl) {
     responseVideo.src = bundle.videoUrl;
     responseVideo.poster = bundle.posterUrl ?? "";
+    responseVideo.loop = bundle.audioInVideo !== true;
+    responseVideo.muted = bundle.audioInVideo !== true;
     await waitForMedia(responseVideo);
   } else {
     responseVideo.removeAttribute("src");
@@ -632,19 +817,24 @@ async function playResponse() {
   if (!state.response?.responseBundle) return;
   stopSpeech();
   const bundle = state.response.responseBundle;
+  const hasVideo = Boolean(bundle.videoUrl);
   mediaStage.classList.add("is-speaking");
   if (isAnimatedGuardianPortrait(bundle)) {
     startPortraitAnimation({ syntheticSpeech: true });
   }
-  if (bundle.videoUrl) {
+  if (hasVideo) {
     responseVideo.currentTime = 0;
-    responseVideo.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
+    responseVideo.loop = bundle.audioInVideo !== true;
+    responseVideo.muted = bundle.audioInVideo !== true;
     try {
       await responseVideo.play();
     } catch {
-      mediaStage.classList.remove("is-speaking");
+      if (!bundle.audioUrl && !bundle.speechSynthesis) mediaStage.classList.remove("is-speaking");
     }
-    return;
+    if (bundle.audioInVideo === true) {
+      responseVideo.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
+      return;
+    }
   }
   if (bundle.audioUrl) {
     responseAudio.currentTime = 0;
@@ -658,6 +848,11 @@ async function playResponse() {
     return;
   }
   if (!bundle.speechSynthesis) {
+    if (hasVideo) {
+      responseVideo.loop = false;
+      responseVideo.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
+      return;
+    }
     mediaStage.classList.remove("is-speaking");
     return;
   }
@@ -666,14 +861,18 @@ async function playResponse() {
   utterance.lang = "ja-JP";
   utterance.rate = 0.86;
   utterance.pitch = 1.04;
-  utterance.addEventListener("start", () => startPortraitAnimation({ syntheticSpeech: true }), { once: true });
+  utterance.addEventListener("start", () => {
+    if (!hasVideo) startPortraitAnimation({ syntheticSpeech: true });
+  }, { once: true });
   utterance.addEventListener("end", () => {
     state.responseUtterance = null;
+    if (hasVideo) responseVideo.pause();
     stopPortraitAnimation();
     mediaStage.classList.remove("is-speaking");
   }, { once: true });
   utterance.addEventListener("error", () => {
     state.responseUtterance = null;
+    if (hasVideo) responseVideo.pause();
     stopPortraitAnimation();
     mediaStage.classList.remove("is-speaking");
   }, { once: true });
@@ -777,6 +976,7 @@ async function updateConsent(action) {
 }
 
 consentCheck.addEventListener("change", () => { startSetup.disabled = !consentCheck.checked || !state.consent; });
+videoConsentCheck.addEventListener("change", () => renderVideoGeneration(state.videoGeneration));
 samplePhotoInput.addEventListener("change", async () => {
   samplingStatus.textContent = "";
   try {
@@ -808,6 +1008,7 @@ sampleRecordButton.addEventListener("click", () => {
 });
 saveSampleButton.addEventListener("click", saveSampling);
 deleteSampleButton.addEventListener("click", deleteSampling);
+generateVideoButton.addEventListener("click", generateSamplingVideo);
 startSetup.addEventListener("click", () => showScreen("record"));
 recordButton.addEventListener("click", () => state.mediaRecorder?.state === "recording" ? stopRecording() : startRecording());
 demoAudioButton.addEventListener("click", () => transcribe({ useDemo: true }));
@@ -829,17 +1030,26 @@ backButton.addEventListener("click", () => {
   else if (state.screen === "transcript") showScreen("record");
   else resetFlow();
 });
-window.addEventListener("pagehide", () => { stopTracks(); stopSampleTracks(); stopSpeech(); });
+window.addEventListener("pagehide", () => {
+  state.videoGenerationPollAbort?.abort();
+  stopTracks();
+  stopSampleTracks();
+  stopSpeech();
+});
 responseAudio.addEventListener("pause", () => {
-  if (state.response?.responseBundle?.audioUrl) stopPortraitAnimation();
+  if (!state.response?.responseBundle?.audioUrl) return;
+  if (state.response.responseBundle.videoUrl) responseVideo.pause();
+  stopPortraitAnimation();
 });
 responseAudio.addEventListener("ended", () => {
   if (!state.response?.responseBundle?.audioUrl) return;
+  if (state.response.responseBundle.videoUrl) responseVideo.pause();
   stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 });
 responseAudio.addEventListener("error", () => {
   if (!state.response?.responseBundle?.audioUrl) return;
+  if (state.response.responseBundle.videoUrl) responseVideo.pause();
   stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 });

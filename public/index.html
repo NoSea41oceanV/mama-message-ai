@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おたすけメッセージ</title>
-    <link rel="stylesheet" href="/styles.css?v=19">
+    <link rel="stylesheet" href="/styles.css?v=22">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -173,6 +173,24 @@
           <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
         </div>
         <p class="sample-note">登録素材はこのブラウザの保護者プロフィールに紐づけて暗号化保存されます。別のプロフィールからは参照できません。</p>
+        <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">
+          <div class="video-generation-heading">
+            <div>
+              <p class="section-label">実動画</p>
+              <h4 id="videoGenerationTitle">保護者の返信動画</h4>
+            </div>
+            <span class="sample-badge" id="sampleVideoBadge">未作成</span>
+          </div>
+          <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
+          <p class="video-generation-copy">登録写真から、会話中に繰り返し使える約5秒の動画を作成します。返答ごとの音声と字幕は動画と同時に再生されます。</p>
+          <label class="check-row sample-consent">
+            <input id="videoConsentCheck" type="checkbox">
+            <span>登録写真をOrcaRouter経由でKlingへ送信し、動画を生成することに同意します</span>
+          </label>
+          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled>返信動画をつくる</button>
+          <p class="sample-note">生成には通常30〜90秒かかります。完成後の動画はプロフィールごとに暗号化保存されます。</p>
+          <p id="videoGenerationStatus" class="inline-status" role="status"></p>
+        </section>
         <p id="samplingStatus" class="inline-status" role="status"></p>
       </section>
       <h3>素材利用の管理</h3>
@@ -186,6 +204,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=19"></script>
+    <script type="module" src="/app.js?v=22"></script>
   </body>
 </html>

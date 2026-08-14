@@ -455,6 +455,8 @@ dialog .secondary-button { box-shadow: none; }
 .sampling-heading h3 { margin: 0 0 14px; font-size: 20px; }
 .sample-badge { flex: 0 0 auto; padding: 5px 8px; border: 2px solid var(--rule); border-radius: 8px; background: #eef5f8; color: var(--muted); font-size: 12px; font-weight: 900; }
 .sample-badge.is-ready { border-color: #37a38f; background: var(--mint-soft); color: #167a68; }
+.sample-badge.is-progress { border-color: #338eb9; background: var(--sky-soft); color: #155f83; }
+.sample-badge.is-failed { border-color: #d75050; background: #fff0f0; color: #a52222; }
 .text-input { min-height: 44px; padding: 9px 11px; border-radius: 8px; background: var(--white); color: var(--ink-strong); }
 .sample-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
 .sample-picker { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-width: 0; min-height: 196px; padding: 13px 10px; overflow: hidden; border: 2px dashed #9bc7da; border-radius: 8px; background: #f5fbfd; color: var(--ink); text-align: center; cursor: pointer; }
@@ -473,6 +475,12 @@ dialog .secondary-button { box-shadow: none; }
 .sample-actions { margin-top: 16px; }
 .sample-actions button { min-height: 44px; padding: 9px 12px; font-size: 13px; }
 .sample-note { margin: 13px 0 7px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.video-generation-panel { margin: 18px 0 12px; padding: 16px; border: 2px solid #9bc7da; border-radius: 8px; background: #f5fbfd; }
+.video-generation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.video-generation-heading h4 { margin: 2px 0 10px; font-size: 17px; }
+.video-generation-panel video { display: block; width: min(100%, 220px); aspect-ratio: 9 / 16; max-height: 320px; margin: 4px auto 13px; border: 2px solid var(--rule); border-radius: 8px; background: #162b3c; object-fit: cover; }
+.video-generation-copy { margin: 0 0 12px; color: var(--ink); font-size: 12px; line-height: 1.6; }
+.video-generation-button { width: 100%; min-height: 44px; margin-top: 8px; box-shadow: none; }
 .inline-status { min-height: 22px; margin: 0 0 12px; color: #167a68; font-size: 12px; font-weight: 800; line-height: 1.5; }
 .decision-list { display: grid; grid-template-columns: 120px 1fr; margin: 20px 0 0; border-top: 1px solid var(--rule); }
 .decision-list dt, .decision-list dd { margin: 0; padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 13px; }

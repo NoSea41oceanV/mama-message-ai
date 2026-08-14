@@ -11,6 +11,8 @@ import {
   GUARDIAN_PROFILE_ID_PATTERN,
   createPersistentGuardianSamplingStore,
 } from "./lib/persistent-guardian-sampling.mjs";
+import { createGuardianVideoService } from "./lib/guardian-video-service.mjs";
+import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
@@ -47,6 +49,15 @@ const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
 const guardianSampling = createPersistentGuardianSamplingStore({
   directory: fileURLToPath(new URL("./.data/guardian-samples/", import.meta.url)),
+});
+const klingVideoProvider = createKlingVideoProvider();
+const guardianVideoService = createGuardianVideoService({
+  samplingStore: guardianSampling,
+  provider: klingVideoProvider,
+  pollIntervalMs: Number(process.env.KLING_VIDEO_POLL_INTERVAL_SECONDS || 5) * 1000,
+  pollTimeoutMs: Number(process.env.KLING_VIDEO_POLL_TIMEOUT_SECONDS || 600) * 1000,
+  maximumBytes: Number(process.env.KLING_VIDEO_MAX_BYTES || 25 * 1024 * 1024),
+  downloadTimeoutMs: Number(process.env.KLING_VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
 });
 const guardianSamplingRecordingText = "お話ししてくれてありがとう。いつも応援しているよ。";
 const demoConsentByProfile = new Map();
@@ -115,7 +126,7 @@ async function readJson(req, maximumBytes = 8 * 1024 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function samplingApiView(status = guardianSampling.status()) {
+function samplingApiView(status) {
   return {
     configured: status.configured === true,
     active: status.active === true,
@@ -128,6 +139,7 @@ function samplingApiView(status = guardianSampling.status()) {
     avatarAssetId: status.avatarAssetId ?? null,
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
     voiceCloningAvailable: false,
+    videoGeneration: status.videoGeneration ?? { status: "not_started" },
   };
 }
 
@@ -276,7 +288,16 @@ const demoReplyVideoUrls = Object.freeze({
   listen: "/assets/video/listen.webm",
   clarify: "/assets/video/clarify.webm",
 });
+const storedGeneratedVideoProvider = Object.freeze({
+  name: "stored-kling-video",
+  generate: async (context) => context.generatedVideoUrl ? {
+    videoUrl: context.generatedVideoUrl,
+    audioInVideo: false,
+    speechSynthesis: true,
+  } : null,
+});
 const mediaProvider = createMediaProvider({
+  generatedVideoProvider: storedGeneratedVideoProvider,
   assets: {
     preRecordedVideoUrl: process.env.PREGENERATED_VIDEO_URL || null,
     posterUrl: "/assets/guardian-demo.png",
@@ -397,7 +418,7 @@ function readProviderMetrics(metadata) {
   };
 }
 
-async function finishResponse(requestId, input, startedAt) {
+async function finishResponse(requestId, input, startedAt, runtime = {}) {
   const current = responses.get(requestId);
   if (!current) return;
   const precheck = classifyTranscript(input.confirmedTranscript);
@@ -486,8 +507,13 @@ async function finishResponse(requestId, input, startedAt) {
 
   let responseBundle;
   try {
+    const generatedVideo = registeredSample
+      ? runtime.videoService?.profileStatus?.(input.guardianProfileId)
+        ?? guardianSampling.status(input.guardianProfileId).videoGeneration
+      : null;
+    const generatedVideoUrl = generatedVideo?.status === "ready" ? generatedVideo.videoUrl : null;
     const defaultFault = registeredSample
-      ? "video_failure"
+      ? generatedVideoUrl ? "none" : "video_failure"
       : routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
       ? "generated_video_failure"
       : "video_failure";
@@ -496,6 +522,7 @@ async function finishResponse(requestId, input, startedAt) {
       replyText: decision.replyText,
       consentValid: true,
       faultMode: input.demoFault || defaultFault,
+      generatedVideoUrl,
       posterUrl: registeredSample?.photoUrl,
       audioUrl: registeredSample?.voicePreviewUrl,
       recordedAudioText: registeredSample ? guardianSamplingRecordingText : null,
@@ -559,9 +586,10 @@ async function finishResponse(requestId, input, startedAt) {
   });
 }
 
-async function apiHandler(req, res, url) {
+async function apiHandler(req, res, url, runtime = {}) {
   purgeExpiredData();
-  const samplingAssetMatch = url.pathname.match(/^\/api\/sampling\/assets\/(photo|voice)\/([^/]+)$/);
+  const videoService = runtime.videoService ?? guardianVideoService;
+  const samplingAssetMatch = url.pathname.match(/^\/api\/sampling\/assets\/(photo|voice|video)\/([^/]+)$/);
   if (req.method === "GET" && samplingAssetMatch) {
     let accessToken;
     try {
@@ -572,9 +600,65 @@ async function apiHandler(req, res, url) {
     }
     const media = samplingAssetMatch[1] === "photo"
       ? guardianSampling.readPhoto(accessToken)
-      : guardianSampling.readVoice(accessToken);
+      : samplingAssetMatch[1] === "voice"
+        ? guardianSampling.readVoice(accessToken)
+        : videoService.readVideo(accessToken);
     if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
     else sendPrivateMedia(res, media);
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/sampling/video") {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 4 * 1024);
+      if (input.externalProcessingApproved !== true) {
+        sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
+        return true;
+      }
+      sendJson(res, 202, videoService.start(profileId));
+    } catch (error) {
+      sendJson(res, error.message === "PAYLOAD_TOO_LARGE" ? 413 : error.statusCode || 400, {
+        error: error.code || "VIDEO_GENERATION_REQUEST_INVALID",
+      });
+    }
+    return true;
+  }
+  const samplingVideoMatch = url.pathname.match(/^\/api\/sampling\/video\/([^/]+)$/);
+  if (req.method === "GET" && samplingVideoMatch) {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    let jobId;
+    try {
+      jobId = decodeURIComponent(samplingVideoMatch[1]);
+    } catch {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    const status = videoService.status(profileId, jobId);
+    sendJson(res, status ? 200 : 404, status ?? { error: "NOT_FOUND" });
     return true;
   }
   if (url.pathname === "/api/sampling") {
@@ -628,6 +712,7 @@ async function apiHandler(req, res, url) {
       sttConfigured: Boolean(process.env.STT_API_KEY || process.env.OPENAI_API_KEY),
       mediaMode: String(process.env.MEDIA_PROVIDER || "demo").toLowerCase(),
       preRecordedVideoConfigured: Boolean(process.env.PREGENERATED_VIDEO_URL),
+      videoGenerationConfigured: klingVideoProvider.available,
     });
     return true;
   }
@@ -741,7 +826,7 @@ async function apiHandler(req, res, url) {
       idempotency.set(key, requestId);
       const startedAt = Date.now();
       setTimeout(() => {
-        finishResponse(requestId, input, startedAt).catch(() => {
+        finishResponse(requestId, input, startedAt, runtime).catch(() => {
           const current = responses.get(requestId);
           if (!current) return;
           const result = createAdultHandoff(
@@ -819,11 +904,12 @@ async function serveStatic(res, pathname) {
   }
 }
 
-export function createAppServer() {
+export function createAppServer(options = {}) {
+  const runtime = { videoService: options.videoService ?? guardianVideoService };
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname.startsWith("/api/")) {
-      const handled = await apiHandler(req, res, url);
+      const handled = await apiHandler(req, res, url, runtime);
       if (!handled) sendJson(res, 404, { error: "NOT_FOUND" });
       return;
     }

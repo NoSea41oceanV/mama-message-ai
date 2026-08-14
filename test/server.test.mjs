@@ -7,6 +7,7 @@ process.env.STT_PROVIDER = "demo";
 process.env.STT_API_KEY = "";
 process.env.OPENAI_API_KEY = "";
 process.env.MEDIA_PROVIDER = "demo";
+process.env.VIDEO_GENERATION_PROVIDER = "disabled";
 
 const { buildReply, classifyTranscript, createAppServer, replyIsAllowed } = await import("../server.mjs");
 
@@ -332,6 +333,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "faceApproved",
     "posterUrl",
     "subjectLabel",
+    "videoGeneration",
     "voiceApproved",
     "voiceCloningAvailable",
     "voicePreviewUrl",
@@ -341,6 +343,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
   assert.equal(created.active, true);
   assert.equal(created.faceApproved, true);
   assert.equal(created.voiceApproved, true);
+  assert.deepEqual(created.videoGeneration, { status: "not_started" });
   assert.doesNotMatch(JSON.stringify(created), /server-test-(photo|voice)/);
 
   const status = await (await fetch(`${baseUrl}/api/sampling`, { headers: samplingProfileHeaders })).json();
@@ -454,6 +457,207 @@ test("one guardian profile cannot use another profile's sample", async () => {
     method: "DELETE",
     headers: { "x-guardian-profile-id": profileA },
   });
+});
+
+test("video generation requires a registered profile and reports disabled-provider failure asynchronously", async () => {
+  const profileId = "77777777-7777-4777-8777-777777777777";
+  const headers = { "content-type": "application/json", "x-guardian-profile-id": profileId };
+  const withoutSample = await fetch(`${baseUrl}/api/sampling/video`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ externalProcessingApproved: true }),
+  });
+  assert.equal(withoutSample.status, 409);
+  assert.equal((await withoutSample.json()).error, "SAMPLING_NOT_REGISTERED");
+
+  await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(samplingRegistration()),
+  });
+  const create = await fetch(`${baseUrl}/api/sampling/video`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ externalProcessingApproved: true }),
+  });
+  assert.equal(create.status, 202);
+  const queued = await create.json();
+  assert.equal(queued.status, "queued");
+
+  let result = queued;
+  const deadline = Date.now() + 1000;
+  while (result.status !== "failed" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    result = await (await fetch(`${baseUrl}/api/sampling/video/${queued.jobId}`, { headers })).json();
+  }
+  assert.equal(result.status, "failed");
+  assert.match(result.message, /try again/i);
+  const samplingStatus = await (await fetch(`${baseUrl}/api/sampling`, { headers })).json();
+  assert.deepEqual(samplingStatus.videoGeneration, result);
+
+  await fetch(`${baseUrl}/api/sampling`, { method: "DELETE", headers });
+});
+
+test("video endpoints enforce profile isolation and serve only private capability media", async () => {
+  const profileA = "44444444-4444-4444-8444-444444444444";
+  const profileB = "55555555-5555-4555-8555-555555555555";
+  const currentByProfile = new Map();
+  let generation = 0;
+  const videoBytes = Buffer.from("private-endpoint-video");
+  const videoService = {
+    start(profileId) {
+      generation += 1;
+      const value = {
+        status: "queued",
+        jobId: `video-endpoint-${generation}`,
+        message: "Video generation queued.",
+      };
+      currentByProfile.set(profileId, value);
+      return value;
+    },
+    status(profileId, jobId) {
+      const value = currentByProfile.get(profileId);
+      return value?.jobId === jobId ? value : null;
+    },
+    readVideo(token) {
+      return token === "private-video-token" ? { bytes: videoBytes, mimeType: "video/mp4" } : null;
+    },
+  };
+  const isolatedServer = createAppServer({ videoService });
+  await new Promise((resolve) => isolatedServer.listen(0, "127.0.0.1", resolve));
+  const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.address().port}`;
+  try {
+    const missingProfile = await fetch(`${isolatedBaseUrl}/api/sampling/video`, { method: "POST" });
+    assert.equal(missingProfile.status, 400);
+    assert.equal((await missingProfile.json()).error, "GUARDIAN_PROFILE_ID_REQUIRED");
+
+    const missingConsent = await fetch(`${isolatedBaseUrl}/api/sampling/video`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-guardian-profile-id": profileA },
+      body: "{}",
+    });
+    assert.equal(missingConsent.status, 422);
+    assert.equal((await missingConsent.json()).error, "EXTERNAL_PROCESSING_CONSENT_REQUIRED");
+
+    const createdResponse = await fetch(`${isolatedBaseUrl}/api/sampling/video`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-guardian-profile-id": profileA },
+      body: JSON.stringify({ externalProcessingApproved: true }),
+    });
+    assert.equal(createdResponse.status, 202);
+    const created = await createdResponse.json();
+    assert.equal(created.status, "queued");
+    assert.ok(created.jobId);
+
+    const crossProfile = await fetch(`${isolatedBaseUrl}/api/sampling/video/${created.jobId}`, {
+      headers: { "x-guardian-profile-id": profileB },
+    });
+    assert.equal(crossProfile.status, 404);
+
+    currentByProfile.set(profileA, {
+      status: "processing",
+      jobId: created.jobId,
+      message: "Video generation is processing.",
+    });
+    const processing = await (await fetch(`${isolatedBaseUrl}/api/sampling/video/${created.jobId}`, {
+      headers: { "x-guardian-profile-id": profileA },
+    })).json();
+    assert.equal(processing.status, "processing");
+
+    currentByProfile.set(profileA, {
+      status: "failed",
+      jobId: created.jobId,
+      message: "Video generation failed. You can try again.",
+    });
+    const failed = await (await fetch(`${isolatedBaseUrl}/api/sampling/video/${created.jobId}`, {
+      headers: { "x-guardian-profile-id": profileA },
+    })).json();
+    assert.equal(failed.status, "failed");
+
+    const regenerated = await (await fetch(`${isolatedBaseUrl}/api/sampling/video`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-guardian-profile-id": profileA },
+      body: JSON.stringify({ externalProcessingApproved: true }),
+    })).json();
+    assert.notEqual(regenerated.jobId, created.jobId);
+    currentByProfile.set(profileA, {
+      status: "ready",
+      jobId: regenerated.jobId,
+      videoUrl: "/api/sampling/assets/video/private-video-token",
+    });
+    const ready = await (await fetch(`${isolatedBaseUrl}/api/sampling/video/${regenerated.jobId}`, {
+      headers: { "x-guardian-profile-id": profileA },
+    })).json();
+    assert.equal(ready.status, "ready");
+    assert.equal(ready.videoUrl, "/api/sampling/assets/video/private-video-token");
+
+    const media = await fetch(`${isolatedBaseUrl}${ready.videoUrl}`);
+    assert.equal(media.status, 200);
+    assert.equal(media.headers.get("content-type"), "video/mp4");
+    assert.equal(media.headers.get("cache-control"), "private, no-store, max-age=0");
+    assert.deepEqual(Buffer.from(await media.arrayBuffer()), videoBytes);
+  } finally {
+    await new Promise((resolve) => isolatedServer.close(resolve));
+  }
+});
+
+test("normal bundles prefer ready generated video while safety responses remain video-free", async () => {
+  const profileId = "66666666-6666-4666-8666-666666666666";
+  const generatedUrl = "/api/sampling/assets/video/generated-bundle-token";
+  const videoService = {
+    start: () => ({ status: "queued", jobId: "unused" }),
+    status: () => null,
+    profileStatus: () => ({ status: "ready", jobId: "ready-job", videoUrl: generatedUrl }),
+    readVideo: () => null,
+  };
+  const isolatedServer = createAppServer({ videoService });
+  await new Promise((resolve) => isolatedServer.listen(0, "127.0.0.1", resolve));
+  const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.address().port}`;
+  try {
+    const sample = await (await fetch(`${isolatedBaseUrl}/api/sampling`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-guardian-profile-id": profileId },
+      body: JSON.stringify(samplingRegistration()),
+    })).json();
+
+    async function createResponse(confirmedTranscript) {
+      const created = await (await fetch(`${isolatedBaseUrl}/api/responses`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-guardian-profile-id": profileId },
+        body: JSON.stringify({
+          sessionId: `generated-${crypto.randomUUID()}`,
+          transcriptId: `tr-${crypto.randomUUID()}`,
+          confirmedTranscript,
+          consentId: sample.consentId,
+          avatarAssetId: sample.avatarAssetId,
+          idempotencyKey: `generated:${crypto.randomUUID()}`,
+        }),
+      })).json();
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      return (await fetch(`${isolatedBaseUrl}/api/responses/${created.requestId}`, {
+        headers: { "x-guardian-profile-id": profileId },
+      })).json();
+    }
+
+    const normal = await createResponse("きょうブロックでおうちを作ったよ");
+    assert.equal(normal.status, "READY");
+    assert.equal(normal.responseBundle.fallbackLevel, 1);
+    assert.equal(normal.responseBundle.tier, "GENERATED_VIDEO");
+    assert.equal(normal.responseBundle.videoUrl, generatedUrl);
+    assert.equal(normal.responseBundle.audioInVideo, false);
+    assert.equal(normal.responseBundle.speechSynthesis, true);
+
+    const safety = await createResponse("知らない人がいて怖い、助けて");
+    assert.equal(safety.status, "ADULT_HANDOFF");
+    assert.equal(safety.responseBundle, null);
+    assert.equal(JSON.stringify(safety).includes(generatedUrl), false);
+  } finally {
+    await fetch(`${isolatedBaseUrl}/api/sampling`, {
+      method: "DELETE",
+      headers: { "x-guardian-profile-id": profileId },
+    }).catch(() => {});
+    await new Promise((resolve) => isolatedServer.close(resolve));
+  }
 });
 
 test("revoking consent erases an active custom sample", async () => {

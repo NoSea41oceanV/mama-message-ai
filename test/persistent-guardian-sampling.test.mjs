@@ -58,3 +58,44 @@ test("persistent samples survive restart, stay encrypted, and remain profile-iso
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("generated guardian video is encrypted, profile-bound, restart-safe, and erased with consent", () => {
+  const root = mkdtempSync(join(tmpdir(), "guardian-video-persistence-"));
+  const directory = join(root, "samples");
+  const encryptionKey = Buffer.alloc(32, 9);
+  const video = Buffer.concat([Buffer.from("....ftypisom"), Buffer.from("private-generated-video")]);
+  try {
+    const first = createPersistentGuardianSamplingStore({ directory, encryptionKey });
+    first.register(profileA, registration("Guardian A"));
+    first.register(profileB, registration("Guardian B"));
+    const queued = first.createVideoJob(profileA, { jobId: "video-job-a" });
+    assert.deepEqual(queued, {
+      status: "queued",
+      jobId: "video-job-a",
+      message: "Video generation queued.",
+    });
+    first.updateVideoJob(profileA, "video-job-a", {
+      status: "processing",
+      providerTaskId: "provider-task-private",
+      message: "Video generation is processing.",
+    });
+    const ready = first.storeVideo(profileA, "video-job-a", { bytes: video, mimeType: "video/mp4" });
+    assert.equal(ready.status, "ready");
+    assert.match(ready.videoUrl, /^\/api\/sampling\/assets\/video\//);
+
+    const encryptedSource = readFileSync(join(directory, `${profileA}.sample`), "utf8");
+    assert.doesNotMatch(encryptedSource, /private-generated-video/);
+    assert.doesNotMatch(encryptedSource, /provider-task-private/);
+
+    const restarted = createPersistentGuardianSamplingStore({ directory, encryptionKey });
+    assert.deepEqual(restarted.status(profileA).videoGeneration, ready);
+    assert.equal(restarted.status(profileB).videoGeneration.status, "not_started");
+    const token = decodeURIComponent(ready.videoUrl.split("/").at(-1));
+    assert.deepEqual(restarted.readVideo(token).bytes, video);
+    restarted.revoke(profileA);
+    assert.equal(restarted.status(profileA).videoGeneration.status, "not_started");
+    assert.equal(restarted.readVideo(token), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

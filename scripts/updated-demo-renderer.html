@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>AI HACK 2026 Updated Live Demo</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #111820; color: white; font-family: "Yu Gothic UI", "Meiryo", sans-serif; }
+    main { display: grid; gap: 14px; justify-items: center; }
+    canvas { width: min(96vw, 1280px); aspect-ratio: 16 / 9; background: white; box-shadow: 0 20px 60px #0008; }
+    button { padding: 12px 24px; border: 0; border-radius: 6px; background: #ff6457; color: white; font: 700 16px inherit; }
+    output { min-height: 24px; }
+  </style>
+</head>
+<body>
+  <main>
+    <canvas id="canvas" width="1280" height="720"></canvas>
+    <button id="start" type="button">更新版デモ動画を生成</button>
+    <output id="status">準備中</output>
+  </main>
+  <script type="module">
+    const canvas = document.querySelector("#canvas");
+    const context = canvas.getContext("2d");
+    const startButton = document.querySelector("#start");
+    const status = document.querySelector("#status");
+    const scenes = await (await fetch("/scenes.json")).json();
+    const situationImage = await createImageBitmap(await (await fetch("/assets/situation-babysitter-child.png")).blob());
+    const mascot = await createImageBitmap(await (await fetch("/assets/messenger-mascot.png")).blob());
+    const liveVideo = document.createElement("video");
+    liveVideo.src = "/live/app.webm";
+    liveVideo.muted = true;
+    liveVideo.playsInline = true;
+    liveVideo.preload = "auto";
+    await new Promise((resolve, reject) => {
+      liveVideo.addEventListener("loadeddata", resolve, { once: true });
+      liveVideo.addEventListener("error", reject, { once: true });
+      liveVideo.load();
+    });
+
+    let elapsed = 0;
+    for (let index = 0; index < scenes.length; index += 1) {
+      const scene = scenes[index];
+      scene.start = elapsed;
+      scene.end = elapsed + scene.duration;
+      scene.index = index;
+      elapsed = scene.end;
+      scene.audio = await (await fetch(`/audio/scene-${String(index + 1).padStart(2, "0")}.wav`)).arrayBuffer();
+    }
+    const totalDuration = elapsed;
+
+    function roundedRect(x, y, width, height, radius, fill, stroke = null) {
+      context.beginPath();
+      context.roundRect(x, y, width, height, radius);
+      context.fillStyle = fill;
+      context.fill();
+      if (stroke) {
+        context.strokeStyle = stroke;
+        context.lineWidth = 2;
+        context.stroke();
+      }
+    }
+
+    function drawCover(image, zoom = 1, offsetX = 0, offsetY = 0) {
+      const scale = Math.max(1280 / image.width, 720 / image.height) * zoom;
+      const width = image.width * scale;
+      const height = image.height * scale;
+      context.drawImage(image, (1280 - width) / 2 + offsetX, (720 - height) / 2 + offsetY, width, height);
+    }
+
+    function wrap(text, maxChars) {
+      const rows = [];
+      let row = "";
+      for (const character of text) {
+        row += character;
+        if (row.length >= maxChars || "、。！？".includes(character)) {
+          rows.push(row);
+          row = "";
+        }
+      }
+      if (row) rows.push(row);
+      return rows;
+    }
+
+    function drawLines(lines, x, y, lineHeight, color, font, align = "left") {
+      context.fillStyle = color;
+      context.font = font;
+      context.textAlign = align;
+      lines.forEach((line, index) => context.fillText(line, x, y + index * lineHeight));
+      context.textAlign = "left";
+    }
+
+    function drawHeader(label) {
+      context.font = "700 18px 'Yu Gothic UI'";
+      const width = Math.max(210, Math.ceil(context.measureText(label).width) + 66);
+      roundedRect(34, 28, width, 42, 6, "rgba(9, 38, 60, 0.86)");
+      context.fillStyle = "#53d2bf";
+      context.beginPath();
+      context.arc(57, 49, 6, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#ffffff";
+      context.fillText(label, 76, 56);
+    }
+
+    function drawSituation(scene, localTime) {
+      const progress = localTime / scene.duration;
+      drawCover(situationImage, 1.02 + progress * 0.055, progress * -22, 0);
+      const gradient = context.createLinearGradient(0, 0, 760, 0);
+      gradient.addColorStop(0, "rgba(7, 26, 41, 0.82)");
+      gradient.addColorStop(0.64, "rgba(7, 26, 41, 0.34)");
+      gradient.addColorStop(1, "rgba(7, 26, 41, 0)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 820, 720);
+      drawHeader("AI HACK 2026");
+      drawLines(wrap(scene.title, 12), 62, 235, 64, "#ffffff", "800 49px 'Yu Gothic UI'");
+      context.fillStyle = "#ffd23f";
+      context.fillRect(62, 390, 104, 7);
+      drawLines(wrap(scene.caption, 16), 62, 445, 39, "#ffffff", "600 27px 'Yu Gothic UI'");
+      roundedRect(62, 594, 260, 46, 6, "rgba(255,255,255,0.92)");
+      context.fillStyle = "#13364d";
+      context.font = "700 18px 'Yu Gothic UI'";
+      context.fillText("ベビーシッター同席", 88, 624);
+    }
+
+    function drawPrinciple(scene) {
+      context.fillStyle = "#f4fbff";
+      context.fillRect(0, 0, 1280, 720);
+      drawHeader("PRODUCT PRINCIPLE");
+      drawLines([scene.title], 64, 164, 60, "#12314a", "800 48px 'Yu Gothic UI'");
+      drawLines(wrap(scene.caption, 28), 64, 212, 36, "#536779", "600 24px 'Yu Gothic UI'");
+      const cards = [
+        ["01", "保護者の同意", "写真・声・外部送信"],
+        ["02", "見守る大人", "シッターが必ず同席"],
+        ["03", "AIは補助", "判断と安全を支える"],
+      ];
+      cards.forEach(([number, title, detail], index) => {
+        const x = 64 + index * 394;
+        roundedRect(x, 320, 350, 220, 8, "#ffffff", "#c7ddea");
+        context.fillStyle = ["#ff6457", "#42c9b4", "#198fd0"][index];
+        context.font = "800 24px 'Yu Gothic UI'";
+        context.fillText(number, x + 28, 362);
+        context.fillStyle = "#12314a";
+        context.font = "800 29px 'Yu Gothic UI'";
+        context.fillText(title, x + 28, 420);
+        context.fillStyle = "#5d7181";
+        context.font = "600 20px 'Yu Gothic UI'";
+        context.fillText(detail, x + 28, 474);
+      });
+      context.fillStyle = "#42c9b4";
+      context.fillRect(64, 590, 1152, 7);
+    }
+
+    function drawLive(scene) {
+      context.drawImage(liveVideo, 0, 0, 1280, 720);
+      roundedRect(24, 22, 166, 40, 6, "rgba(9,38,60,0.88)");
+      context.fillStyle = "#ff6457";
+      context.beginPath();
+      context.arc(48, 42, 6, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#ffffff";
+      context.font = "800 17px 'Yu Gothic UI'";
+      context.fillText("LIVE DEMO", 65, 49);
+      roundedRect(1016, 22, 238, 40, 6, "rgba(255,255,255,0.94)");
+      context.fillStyle = "#12314a";
+      context.font = "700 17px 'Yu Gothic UI'";
+      context.fillText("ベビーシッター同席", 1044, 49);
+    }
+
+    function drawArrow(x1, y1, x2, y2, color = "#8ca9ba") {
+      context.strokeStyle = color;
+      context.lineWidth = 4;
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      context.stroke();
+      context.fillStyle = color;
+      context.beginPath();
+      context.moveTo(x2, y2);
+      context.lineTo(x2 - 12, y2 - 8);
+      context.lineTo(x2 - 12, y2 + 8);
+      context.closePath();
+      context.fill();
+    }
+
+    function drawArchitecture(scene) {
+      context.fillStyle = "#f8fbfd";
+      context.fillRect(0, 0, 1280, 720);
+      drawHeader("TARGET ARCHITECTURE / NEXT");
+      drawLines([scene.title], 64, 142, 60, "#12314a", "800 44px 'Yu Gothic UI'");
+      drawLines([scene.caption], 64, 184, 34, "#607585", "600 21px 'Yu Gothic UI'");
+      const boxes = [
+        { x: 46, color: "#ffd23f", title: "子どもの音声", rows: ["シッター同席"] },
+        { x: 288, color: "#198fd0", title: "OrcaRouter", rows: ["STT・返答", "感情・安全"] },
+        { x: 530, color: "#ff6457", title: "最終音声", rows: ["TTS", "一つの音源"] },
+        { x: 772, color: "#8f74d8", title: "D-ID", rows: ["登録写真", "口の同期"] },
+        { x: 1014, color: "#42c9b4", title: "UI", rows: ["動画・音声", "字幕を同時表示"] },
+      ];
+      boxes.forEach((box, index) => {
+        roundedRect(box.x, 278, 218, 184, 8, "#ffffff", "#cadce7");
+        context.fillStyle = box.color;
+        context.fillRect(box.x, 278, 218, 9);
+        context.fillStyle = "#12314a";
+        context.font = "800 24px 'Yu Gothic UI'";
+        context.fillText(box.title, box.x + 20, 338);
+        drawLines(box.rows, box.x + 20, 385, 30, "#617584", "600 18px 'Yu Gothic UI'");
+        if (index < boxes.length - 1) drawArrow(box.x + 218, 370, boxes[index + 1].x - 12, 370);
+      });
+      drawArrow(397, 462, 397, 535, "#ff6457");
+      roundedRect(268, 535, 420, 96, 8, "#fff2f0", "#ff9b92");
+      context.fillStyle = "#c43f35";
+      context.font = "800 22px 'Yu Gothic UI'";
+      context.fillText("安全ルート", 292, 573);
+      context.font = "600 18px 'Yu Gothic UI'";
+      context.fillText("D-IDを呼ばず、そばの大人へ引き継ぐ", 292, 606);
+      context.fillStyle = "#12314a";
+      context.font = "700 17px 'Yu Gothic UI'";
+      context.fillText("MP4内音声のみ再生  /  別TTSは再生しない", 792, 593);
+    }
+
+    function drawSafety(scene) {
+      context.fillStyle = "#e8f8f4";
+      context.fillRect(0, 0, 1280, 720);
+      drawHeader("SAFETY & PRIVACY");
+      drawLines([scene.title], 64, 154, 58, "#12314a", "800 46px 'Yu Gothic UI'");
+      drawLines([scene.caption], 64, 201, 34, "#4d6a70", "600 22px 'Yu Gothic UI'");
+      const items = [
+        ["安全時は外部生成 0回", "D-IDへ写真も音声も送りません"],
+        ["明示同意と失効", "写真・声・外部送信を個別管理"],
+        ["AES-256-GCM", "完成動画と登録素材を暗号化保存"],
+        ["秘密を残さない", "APIキー・会話本文をGitやログへ出さない"],
+      ];
+      items.forEach(([title, detail], index) => {
+        const y = 274 + index * 91;
+        context.fillStyle = "#42c9b4";
+        context.beginPath();
+        context.arc(90, y, 23, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#ffffff";
+        context.font = "800 24px 'Yu Gothic UI'";
+        context.fillText("✓", 79, y + 9);
+        context.fillStyle = "#12314a";
+        context.font = "800 23px 'Yu Gothic UI'";
+        context.fillText(title, 132, y - 2);
+        context.fillStyle = "#5b737b";
+        context.font = "600 18px 'Yu Gothic UI'";
+        context.fillText(detail, 132, y + 28);
+      });
+      roundedRect(830, 274, 374, 348, 8, "#ffffff", "#b8ddd4");
+      context.fillStyle = "#ffd23f";
+      context.beginPath();
+      context.arc(1017, 385, 72, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#12314a";
+      context.font = "900 76px 'Yu Gothic UI'";
+      context.textAlign = "center";
+      context.fillText("!", 1017, 414);
+      context.font = "800 25px 'Yu Gothic UI'";
+      context.fillText("大人へ引き継ぐ", 1017, 505);
+      context.fillStyle = "#5b737b";
+      context.font = "600 18px 'Yu Gothic UI'";
+      context.fillText("静止画フォールバックを", 1017, 548);
+      context.fillText("要件達成とは扱わない", 1017, 577);
+      context.textAlign = "left";
+    }
+
+    function drawBusiness(scene) {
+      context.fillStyle = "#fffdf8";
+      context.fillRect(0, 0, 1280, 720);
+      drawHeader("BUSINESS PLAN");
+      drawLines([scene.title], 64, 150, 58, "#12314a", "800 45px 'Yu Gothic UI'");
+      drawLines([scene.caption], 64, 196, 34, "#65717a", "600 21px 'Yu Gothic UI'");
+      const cards = [
+        { x: 64, color: "#ff6457", tag: "MVP", title: "家庭 × シッター", rows: ["保護者が契約", "同意済み1家庭から検証"] },
+        { x: 456, color: "#198fd0", tag: "PRICE", title: "980円 / 月10回", rows: ["短尺1回 約34円", "回数制で原価を管理"] },
+        { x: 848, color: "#42c9b4", tag: "NEXT", title: "保育園へ展開", rows: ["施設認証・複数同意", "運用設計後にPoC"] },
+      ];
+      cards.forEach((card) => {
+        roundedRect(card.x, 290, 344, 272, 8, "#ffffff", "#d9e0e3");
+        roundedRect(card.x + 24, 316, 92, 34, 5, card.color);
+        context.fillStyle = "#ffffff";
+        context.font = "800 15px 'Yu Gothic UI'";
+        context.fillText(card.tag, card.x + 40, 339);
+        context.fillStyle = "#12314a";
+        context.font = "800 27px 'Yu Gothic UI'";
+        context.fillText(card.title, card.x + 24, 409);
+        drawLines(card.rows, card.x + 24, 463, 35, "#647580", "600 19px 'Yu Gothic UI'");
+      });
+      context.fillStyle = "#ffd23f";
+      context.fillRect(64, 610, 1128, 7);
+    }
+
+    function drawOutro(scene) {
+      context.fillStyle = "#36b5e5";
+      context.fillRect(0, 0, 1280, 720);
+      context.fillStyle = "#ffffff";
+      context.beginPath();
+      context.ellipse(190, 120, 245, 78, 0, 0, Math.PI * 2);
+      context.fill();
+      context.beginPath();
+      context.ellipse(1115, 570, 250, 82, 0, 0, Math.PI * 2);
+      context.fill();
+      context.drawImage(mascot, 535, 72, 210, 210);
+      context.textAlign = "center";
+      context.fillStyle = "#ffffff";
+      context.font = "900 74px 'Yu Gothic UI'";
+      context.fillText(scene.title, 640, 390);
+      context.font = "700 30px 'Yu Gothic UI'";
+      context.fillText(scene.caption, 640, 454);
+      roundedRect(458, 515, 364, 60, 6, "#ffd23f");
+      context.fillStyle = "#12314a";
+      context.font = "800 23px 'Yu Gothic UI'";
+      context.fillText("AI HACK 2026", 640, 554);
+      context.textAlign = "left";
+    }
+
+    function draw(time) {
+      const scene = scenes.find((item) => time >= item.start && time < item.end) ?? scenes.at(-1);
+      const localTime = Math.max(0, time - scene.start);
+      if (scene.kind === "situation") drawSituation(scene, localTime);
+      else if (scene.kind === "principle") drawPrinciple(scene);
+      else if (scene.kind === "live") drawLive(scene);
+      else if (scene.kind === "architecture") drawArchitecture(scene);
+      else if (scene.kind === "safety") drawSafety(scene);
+      else if (scene.kind === "business") drawBusiness(scene);
+      else drawOutro(scene);
+
+      context.fillStyle = "rgba(255,255,255,0.7)";
+      context.fillRect(0, 710, 1280, 10);
+      context.fillStyle = "#ff6457";
+      context.fillRect(0, 710, 1280 * Math.min(1, time / totalDuration), 10);
+    }
+
+    draw(0);
+    status.textContent = `準備完了 / ${totalDuration}秒`;
+
+    startButton.addEventListener("click", async () => {
+      startButton.disabled = true;
+      const audioContext = new AudioContext();
+      await audioContext.resume();
+      const audioDestination = audioContext.createMediaStreamDestination();
+      const canvasStream = canvas.captureStream(30);
+      const stream = new MediaStream([...canvasStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
+      const mimeType = ["video/webm;codecs=vp8,opus", "video/webm;codecs=vp9,opus", "video/webm"]
+        .find((candidate) => MediaRecorder.isTypeSupported(candidate));
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 4_500_000,
+        audioBitsPerSecond: 160_000,
+      });
+      const chunks = [];
+      recorder.addEventListener("dataavailable", (event) => { if (event.data.size) chunks.push(event.data); });
+      const stopped = new Promise((resolve) => recorder.addEventListener("stop", resolve, { once: true }));
+      const baseTime = audioContext.currentTime + 0.5;
+      for (const scene of scenes) {
+        const source = audioContext.createBufferSource();
+        source.buffer = await audioContext.decodeAudioData(scene.audio.slice(0));
+        source.connect(audioDestination);
+        source.start(baseTime + scene.start);
+      }
+      const liveScene = scenes.find((scene) => scene.kind === "live");
+      liveVideo.currentTime = 0;
+      liveVideo.pause();
+      const liveTimer = setTimeout(() => liveVideo.play(), (liveScene.start + 0.05) * 1000);
+      recorder.start(1000);
+      const startedAt = performance.now();
+      await new Promise((resolve) => {
+        function frame(now) {
+          const seconds = (now - startedAt) / 1000;
+          draw(seconds);
+          status.textContent = `録画中 ${Math.min(totalDuration, seconds).toFixed(1)} / ${totalDuration}秒`;
+          if (seconds >= totalDuration) resolve();
+          else requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      });
+      clearTimeout(liveTimer);
+      liveVideo.pause();
+      recorder.stop();
+      await stopped;
+      const video = new Blob(chunks, { type: recorder.mimeType });
+      status.textContent = `保存中 ${(video.size / 1024 / 1024).toFixed(1)} MB`;
+      const response = await fetch("/upload", { method: "POST", headers: { "content-type": video.type }, body: video });
+      if (!response.ok) throw new Error(await response.text());
+      status.textContent = "生成完了";
+      document.title = "DONE - AI HACK 2026 Updated Live Demo";
+      await audioContext.close();
+    }, { once: true });
+  </script>
+</body>
+</html>

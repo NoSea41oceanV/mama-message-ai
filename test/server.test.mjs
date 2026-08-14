@@ -626,6 +626,101 @@ test("ElevenLabs clone audio is generated for a registered guardian reply", asyn
   }
 });
 
+test("HeyGen reply video embeds the cloned voice with content-matched motion", async () => {
+  const calls = { render: 0, supportMode: null, deletedVideos: [] };
+  const voiceProvider = {
+    name: "elevenlabs",
+    available: true,
+    cloneVoice: async () => ({ provider: "elevenlabs", voiceId: "voice-heygen-test" }),
+    synthesize: async () => ({ bytes: Buffer.from("ID3-heygen-reply"), mimeType: "audio/mpeg" }),
+    deleteVoice: async () => true,
+  };
+  const videoService = {
+    profileStatus: () => ({ status: "ready", jobId: "avatar-ready" }),
+    profileProviderTaskId: () => "photo-avatar-1",
+    deleteRemote: async () => true,
+    readVideo: () => null,
+  };
+  const replyVideoProvider = {
+    name: "heygen",
+    available: true,
+    renderReply: async ({ avatarId, audioBytes, audioMimeType, decision }) => {
+      calls.render += 1;
+      calls.supportMode = decision.supportMode;
+      assert.equal(avatarId, "photo-avatar-1");
+      assert.match(audioBytes.toString(), /^ID3/);
+      assert.equal(audioMimeType, "audio/mpeg");
+      return { taskId: "heygen-reply-video-1", status: "ready", videoUrl: "https://files.heygen.test/reply.mp4" };
+    },
+    deleteReplyTask: async (taskId) => {
+      calls.deletedVideos.push(taskId);
+      return true;
+    },
+  };
+  const videoBytes = Buffer.from("heygen-video-with-embedded-audio");
+  const isolatedServer = createAppServer({
+    voiceCloningProvider: voiceProvider,
+    videoService,
+    replyVideoProvider,
+    videoDownloader: async (url) => {
+      assert.equal(url, "https://files.heygen.test/reply.mp4");
+      return { bytes: videoBytes, mimeType: "video/mp4" };
+    },
+  });
+  await new Promise((resolve) => isolatedServer.listen(0, "127.0.0.1", resolve));
+  const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.address().port}`;
+  const profileId = "23232323-2323-4232-8232-232323232323";
+  const headers = { "content-type": "application/json", "x-guardian-profile-id": profileId };
+  try {
+    const createdResponse = await fetch(`${isolatedBaseUrl}/api/sampling`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(samplingRegistration()),
+    });
+    const created = await createdResponse.json();
+    assert.equal(createdResponse.status, 201);
+
+    const responseRequest = await fetch(`${isolatedBaseUrl}/api/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        sessionId: "heygen-reply-session",
+        transcriptId: "heygen-reply-transcript",
+        confirmedTranscript: "ブロックでおうちを作れたよ",
+        consentId: created.consentId,
+        avatarAssetId: created.avatarAssetId,
+        idempotencyKey: `heygen-reply:${crypto.randomUUID()}`,
+      }),
+    });
+    const pending = await responseRequest.json();
+    let result;
+    const deadline = Date.now() + 4000;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      result = await (await fetch(`${isolatedBaseUrl}/api/responses/${pending.requestId}`, {
+        headers: { "x-guardian-profile-id": profileId },
+      })).json();
+    } while (result.status === "PENDING" && Date.now() < deadline);
+
+    assert.equal(result.status, "READY");
+    assert.equal(result.responseBundle.fallbackLevel, 1);
+    assert.equal(result.responseBundle.audioInVideo, true);
+    assert.equal(result.responseBundle.audioUrl, null);
+    assert.match(result.responseBundle.videoUrl, /^\/api\/generated-video\//);
+    assert.equal(calls.render, 1);
+    assert.equal(calls.supportMode, "celebrate");
+    assert.deepEqual(calls.deletedVideos, ["heygen-reply-video-1"]);
+    const video = await fetch(`${isolatedBaseUrl}${result.responseBundle.videoUrl}`);
+    assert.equal(video.status, 200);
+    assert.equal(video.headers.get("content-type"), "video/mp4");
+    assert.deepEqual(Buffer.from(await video.arrayBuffer()), videoBytes);
+
+    await fetch(`${isolatedBaseUrl}/api/sampling`, { method: "DELETE", headers });
+  } finally {
+    await new Promise((resolve) => isolatedServer.close(resolve));
+  }
+});
+
 test("sampling API rejects missing consent, MIME spoofing, and cross-site mutation", async () => {
   const missingConsent = await fetch(`${baseUrl}/api/sampling`, {
     method: "POST",

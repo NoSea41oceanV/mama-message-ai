@@ -15,9 +15,10 @@ import {
   GUARDIAN_PROFILE_ID_PATTERN,
   createPersistentGuardianSamplingStore,
 } from "./lib/persistent-guardian-sampling.mjs";
-import { createGuardianVideoService } from "./lib/guardian-video-service.mjs";
+import { createGuardianVideoService, downloadGeneratedVideo } from "./lib/guardian-video-service.mjs";
 import { createDidVideoProvider } from "./lib/providers/did-video.mjs";
 import { createElevenLabsProvider, ElevenLabsError } from "./lib/providers/elevenlabs.mjs";
+import { createHeyGenVideoProvider } from "./lib/providers/heygen-video.mjs";
 import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
@@ -46,6 +47,7 @@ const idempotency = new Map();
 const conversations = new Map();
 const technicalLogs = [];
 const generatedReplyAudio = new Map();
+const generatedReplyVideo = new Map();
 const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 24);
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
 const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 120);
@@ -66,7 +68,9 @@ const videoRequestTimeoutMs = Number(
 ) * 1000;
 const videoProvider = videoGenerationMode === "did"
   ? createDidVideoProvider({ timeoutMs: videoRequestTimeoutMs })
-  : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
+  : videoGenerationMode === "heygen"
+    ? createHeyGenVideoProvider({ timeoutMs: videoRequestTimeoutMs })
+    : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
 const guardianVideoService = createGuardianVideoService({
   samplingStore: guardianSampling,
   provider: videoProvider,
@@ -132,6 +136,16 @@ function storeGeneratedReplyAudio(media) {
   return `/api/generated-audio/${encodeURIComponent(accessToken)}`;
 }
 
+function storeGeneratedReplyVideo(media) {
+  const accessToken = randomUUID();
+  generatedReplyVideo.set(accessToken, {
+    bytes: media.bytes,
+    mimeType: media.mimeType,
+    createdAt: Date.now(),
+  });
+  return `/api/generated-video/${encodeURIComponent(accessToken)}`;
+}
+
 function securityHeaders() {
   return {
     "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -153,7 +167,7 @@ async function readJson(req, maximumBytes = 8 * 1024 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function samplingApiView(status) {
+function samplingApiView(status, videoGeneration = status.videoGeneration) {
   return {
     configured: status.configured === true,
     active: status.active === true,
@@ -169,7 +183,7 @@ function samplingApiView(status) {
     avatarAssetId: status.avatarAssetId ?? null,
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
     voiceCloningAvailable: status.voiceCloningAvailable === true,
-    videoGeneration: status.videoGeneration ?? { status: "not_started" },
+    videoGeneration: videoGeneration ?? { status: "not_started" },
   };
 }
 
@@ -388,13 +402,22 @@ const demoReplyVideoUrls = Object.freeze({
   clarify: "/assets/video/clarify.webm",
 });
 const storedGeneratedVideoProvider = Object.freeze({
-  name: "stored-kling-video",
-  generate: async (context) => context.generatedVideoUrl ? {
-    videoUrl: context.generatedVideoUrl,
-    audioInVideo: false,
-    audioUrl: context.audioUrl || null,
-    speechSynthesis: !context.audioUrl,
-  } : null,
+  name: "guardian-reply-video",
+  generate: async (context) => context.generatedReplyVideoUrl
+    ? {
+        videoUrl: context.generatedReplyVideoUrl,
+        audioInVideo: true,
+        audioUrl: null,
+        speechSynthesis: false,
+      }
+    : context.generatedVideoUrl
+      ? {
+          videoUrl: context.generatedVideoUrl,
+          audioInVideo: false,
+          audioUrl: context.audioUrl || null,
+          speechSynthesis: !context.audioUrl,
+        }
+      : null,
 });
 const mediaProvider = createMediaProvider({
   generatedVideoProvider: storedGeneratedVideoProvider,
@@ -483,6 +506,12 @@ function purgeExpiredData(now = Date.now()) {
     if (now - audio.createdAt > retentionMs) {
       audio.bytes.fill(0);
       generatedReplyAudio.delete(accessToken);
+    }
+  }
+  for (const [accessToken, video] of generatedReplyVideo) {
+    if (now - video.createdAt > retentionMs) {
+      video.bytes.fill(0);
+      generatedReplyVideo.delete(accessToken);
     }
   }
 }
@@ -633,30 +662,67 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   }
 
   const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
+  const activeVideoService = runtime.videoService ?? guardianVideoService;
+  const activeReplyVideoProvider = runtime.replyVideoProvider
+    ?? (videoProvider.name === "heygen" ? videoProvider : null);
+  let clonedReplyAudio = null;
   let clonedReplyAudioUrl = null;
   let voiceFailureReason = null;
   if (registeredSample?.voiceClone?.provider === "elevenlabs" && registeredSample.voiceClone.voiceId) {
     try {
-      const audio = await activeVoiceProvider.synthesize({
+      clonedReplyAudio = await activeVoiceProvider.synthesize({
         voiceId: registeredSample.voiceClone.voiceId,
         text: decision.replyText,
         speed: registeredSample.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
       });
-      clonedReplyAudioUrl = storeGeneratedReplyAudio(audio);
+      clonedReplyAudioUrl = storeGeneratedReplyAudio(clonedReplyAudio);
     } catch (error) {
       voiceFailureReason = error instanceof ElevenLabsError ? error.code : "VOICE_CLONE_TTS_FAILED";
     }
   }
 
   let responseBundle;
+  let videoFailureReason = null;
   try {
     const generatedVideo = registeredSample
-      ? runtime.videoService?.profileStatus?.(input.guardianProfileId)
+      ? activeVideoService.profileStatus?.(input.guardianProfileId)
         ?? guardianSampling.status(input.guardianProfileId).videoGeneration
       : null;
     const generatedVideoUrl = generatedVideo?.status === "ready" ? generatedVideo.videoUrl : null;
+    let generatedReplyVideoUrl = null;
+    const providerAvatarId = registeredSample
+      ? activeVideoService.profileProviderTaskId?.(input.guardianProfileId)
+      : null;
+    if (
+      providerAvatarId
+      && clonedReplyAudio?.bytes
+      && activeReplyVideoProvider?.available !== false
+      && typeof activeReplyVideoProvider?.renderReply === "function"
+    ) {
+      let replyTask = null;
+      try {
+        replyTask = await activeReplyVideoProvider.renderReply({
+          avatarId: providerAvatarId,
+          audioBytes: clonedReplyAudio.bytes,
+          audioMimeType: clonedReplyAudio.mimeType,
+          decision,
+          idempotencyKey: requestId,
+        });
+        const replyVideo = await (runtime.videoDownloader ?? downloadGeneratedVideo)(replyTask.videoUrl, {
+          maximumBytes: Number(process.env.VIDEO_MAX_BYTES || 25 * 1024 * 1024),
+          timeoutMs: Number(process.env.VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
+        });
+        generatedReplyVideoUrl = storeGeneratedReplyVideo(replyVideo);
+      } catch (error) {
+        videoFailureReason = typeof error?.code === "string" ? error.code : "HEYGEN_REPLY_VIDEO_FAILED";
+      } finally {
+        if (replyTask?.taskId && typeof activeReplyVideoProvider.deleteReplyTask === "function") {
+          await activeReplyVideoProvider.deleteReplyTask(replyTask.taskId).catch(() => {});
+        }
+      }
+    }
     const defaultFault = registeredSample
-      ? generatedVideoUrl ? "none" : "video_failure"
+      ? generatedReplyVideoUrl || generatedVideoUrl ? "none" : "video_failure"
       : routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
       ? "generated_video_failure"
       : "video_failure";
@@ -665,6 +731,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       replyText: decision.replyText,
       consentValid: true,
       faultMode: input.demoFault || defaultFault,
+      generatedReplyVideoUrl,
       generatedVideoUrl,
       posterUrl: registeredSample?.photoUrl,
       audioUrl: clonedReplyAudioUrl,
@@ -734,7 +801,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     latencyMs: Date.now() - startedAt,
     status: result.status,
     fallbackLevel: responseBundle.fallbackLevel,
-    failureReason: voiceFailureReason,
+    failureReason: voiceFailureReason || videoFailureReason,
     ...readUsage(routed.metadata),
   });
 }
@@ -753,6 +820,20 @@ async function apiHandler(req, res, url, runtime = {}) {
       return true;
     }
     const media = generatedReplyAudio.get(accessToken);
+    if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendPrivateMedia(res, media);
+    return true;
+  }
+  const generatedVideoMatch = url.pathname.match(/^\/api\/generated-video\/([^/]+)$/);
+  if (req.method === "GET" && generatedVideoMatch) {
+    let accessToken;
+    try {
+      accessToken = decodeURIComponent(generatedVideoMatch[1]);
+    } catch {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    const media = generatedReplyVideo.get(accessToken);
     if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
     else sendPrivateMedia(res, media);
     return true;
@@ -891,7 +972,7 @@ async function apiHandler(req, res, url, runtime = {}) {
       if (currentSample.voiceClone?.voiceId && currentSample.voiceClone.voiceId !== clonedVoice?.voiceId) {
         await activeVoiceProvider.deleteVoice(currentSample.voiceClone.voiceId).catch(() => {});
       }
-      sendJson(res, 200, samplingApiView(updated));
+      sendJson(res, 200, samplingApiView(updated, videoService.profileStatus?.(profileId)));
     } catch (error) {
       const statusCode = error.message === "PAYLOAD_TOO_LARGE"
         ? 413
@@ -922,7 +1003,10 @@ async function apiHandler(req, res, url, runtime = {}) {
     try {
       const input = await readJson(req, 16 * 1024);
       guardianSampling.updatePreferences(profileId, input);
-      sendJson(res, 200, samplingApiView(guardianSampling.status(profileId)));
+      sendJson(res, 200, samplingApiView(
+        guardianSampling.status(profileId),
+        videoService.profileStatus?.(profileId),
+      ));
     } catch (error) {
       sendJson(res, error instanceof GuardianSamplingError ? error.statusCode : 400, {
         error: error.code || "PREFERENCES_REQUEST_INVALID",
@@ -940,7 +1024,10 @@ async function apiHandler(req, res, url, runtime = {}) {
       return true;
     }
     if (req.method === "GET") {
-      sendJson(res, 200, samplingApiView(guardianSampling.status(profileId)));
+      sendJson(res, 200, samplingApiView(
+        guardianSampling.status(profileId),
+        videoService.profileStatus?.(profileId),
+      ));
       return true;
     }
     if (req.method === "POST") {
@@ -980,6 +1067,7 @@ async function apiHandler(req, res, url, runtime = {}) {
           : null;
         let created;
         try {
+          if (previousStatus.configured) await videoService.deleteRemote?.(profileId);
           created = guardianSampling.register(profileId, input, { voiceClone: clonedVoice });
         } catch (error) {
           if (clonedVoice?.voiceId) await activeVoiceProvider.deleteVoice(clonedVoice.voiceId).catch(() => {});
@@ -988,7 +1076,7 @@ async function apiHandler(req, res, url, runtime = {}) {
         if (previousSample?.voiceClone?.voiceId && previousSample.voiceClone.voiceId !== clonedVoice?.voiceId) {
           await activeVoiceProvider.deleteVoice(previousSample.voiceClone.voiceId).catch(() => {});
         }
-        sendJson(res, 201, samplingApiView(created));
+        sendJson(res, 201, samplingApiView(created, videoService.profileStatus?.(profileId)));
       } catch (error) {
         const statusCode = error.message === "PAYLOAD_TOO_LARGE"
           ? 413
@@ -1026,6 +1114,15 @@ async function apiHandler(req, res, url, runtime = {}) {
           return true;
         }
       }
+      try {
+        await videoService.deleteRemote?.(profileId);
+      } catch {
+        sendJson(res, 502, {
+          error: "HEYGEN_AVATAR_DELETE_FAILED",
+          message: "HeyGen上の本人アバターを削除できませんでした。接続を確認してもう一度お試しください。",
+        });
+        return true;
+      }
       const result = guardianSampling.delete(profileId);
       sendJson(res, 200, { ...samplingApiView(result), deleted: result.deleted });
       return true;
@@ -1044,6 +1141,7 @@ async function apiHandler(req, res, url, runtime = {}) {
       videoGenerationMode,
       videoGenerationProvider: videoProvider.name,
       videoGenerationConfigured: videoProvider.available,
+      replyMotionConfigured: videoProvider.name === "heygen" && videoProvider.available,
       voiceCloningMode,
       voiceCloningProvider: activeVoiceProvider.name,
       voiceCloningConfigured: activeVoiceProvider.available,
@@ -1083,6 +1181,7 @@ async function apiHandler(req, res, url, runtime = {}) {
           if (previousSample?.voiceClone?.voiceId && activeVoiceProvider.available) {
             await activeVoiceProvider.deleteVoice(previousSample.voiceClone.voiceId).catch(() => {});
           }
+          await videoService.deleteRemote?.(profileId).catch(() => {});
           guardianSampling.revoke(profileId);
         }
         demoConsentByProfile.set(profileId, input.action === "restore");
@@ -1272,6 +1371,9 @@ async function serveStatic(res, pathname) {
 export function createAppServer(options = {}) {
   const runtime = {
     videoService: options.videoService ?? guardianVideoService,
+    replyVideoProvider: options.replyVideoProvider
+      ?? (videoProvider.name === "heygen" ? videoProvider : null),
+    videoDownloader: options.videoDownloader ?? downloadGeneratedVideo,
     voiceCloningProvider: options.voiceCloningProvider ?? voiceCloningProvider,
   };
   return createServer(async (req, res) => {

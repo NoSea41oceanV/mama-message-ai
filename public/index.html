@@ -212,19 +212,19 @@
         <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">
           <div class="video-generation-heading">
             <div>
-              <p class="section-label">実動画</p>
-              <h4 id="videoGenerationTitle">保護者の返信動画</h4>
+              <p class="section-label">表情・身振り</p>
+              <h4 id="videoGenerationTitle">本人アバター</h4>
             </div>
             <span class="sample-badge" id="sampleVideoBadge">未作成</span>
           </div>
           <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
-          <p class="video-generation-copy">登録写真から、会話中に繰り返し使える約5秒の動画を作成します。返答ごとの音声と字幕は動画と同時に再生されます。</p>
+          <p class="video-generation-copy">最初に登録写真から本人アバターを準備します。その後は返答ごとに、内容に合う表情・身振り・口の動きをつけます。</p>
           <label class="check-row sample-consent">
             <input id="videoConsentCheck" type="checkbox">
-            <span>登録写真を外部の動画生成サービスへ送信し、返信動画を生成することに同意します</span>
+            <span>登録写真と返信音声をHeyGenへ送信し、本人アバターと返信動画を生成することに同意します</span>
           </label>
-          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled>返信動画をつくる</button>
-          <p class="sample-note">生成には通常30〜90秒かかります。完成後の動画はプロフィールごとに暗号化保存されます。</p>
+          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled>本人アバターを準備する</button>
+          <p class="sample-note">返答動画は音声だけの返信より完成に時間がかかります。失敗または時間切れの場合は、写真とクローン音声へ自動で戻ります。</p>
           <p id="videoGenerationStatus" class="inline-status" role="status"></p>
         </section>
         <p id="samplingStatus" class="inline-status" role="status"></p>
@@ -240,6 +240,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=26"></script>
+    <script type="module" src="/app.js?v=27"></script>
   </body>
 </html>

@@ -123,6 +123,50 @@ test("guardian video service records provider failure without leaking details", 
   }
 });
 
+test("guardian video service marks a reusable avatar ready without requiring a preview video", async () => {
+  const root = mkdtempSync(join(tmpdir(), "guardian-avatar-service-"));
+  try {
+    const store = createPersistentGuardianSamplingStore({
+      directory: join(root, "samples"),
+      encryptionKey: Buffer.alloc(32, 5),
+    });
+    store.register(profileId, registration());
+    const deletedAssets = [];
+    const provider = {
+      name: "heygen",
+      createTask: async () => ({
+        taskId: "avatar-1",
+        providerAssetId: "photo-asset-1",
+        status: "ready",
+        prepared: true,
+        videoUrl: null,
+      }),
+      deleteAsset: async (assetId) => {
+        deletedAssets.push(assetId);
+        return true;
+      },
+    };
+    const service = createGuardianVideoService({
+      samplingStore: store,
+      provider,
+      idFactory: () => "avatar-job",
+      schedule: () => {},
+    });
+    const queued = service.start(profileId);
+    await service.advance(profileId, queued.jobId);
+    assert.deepEqual(service.profileStatus(profileId), {
+      status: "ready",
+      jobId: "video_avatar-job",
+    });
+    assert.equal(service.profileProviderTaskId(profileId), "avatar-1");
+    assert.deepEqual(deletedAssets, ["photo-asset-1"]);
+    assert.equal(store.videoJob(profileId, queued.jobId).provider, "heygen");
+    assert.equal(store.videoJob(profileId, queued.jobId).providerAssetId, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("generated video download enforces HTTPS, type, and byte cap", async () => {
   await assert.rejects(
     downloadGeneratedVideo("http://signed.example/video.mp4"),

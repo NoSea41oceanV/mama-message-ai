@@ -13,6 +13,11 @@ import {
   KlingVideoProviderError,
   createKlingVideoProvider,
 } from "../lib/providers/kling-video.mjs";
+import {
+  HeyGenVideoProviderError,
+  createHeyGenVideoProvider,
+  heyGenMotionForDecision,
+} from "../lib/providers/heygen-video.mjs";
 import { SttProviderError, createSttProvider } from "../lib/providers/stt.mjs";
 import { ElevenLabsError, createElevenLabsProvider } from "../lib/providers/elevenlabs.mjs";
 import {
@@ -284,6 +289,132 @@ test("D-ID is available only when selected with an HTTPS endpoint and key", asyn
   await assert.rejects(
     disabled.getTask("talk-1"),
     (error) => error instanceof DidVideoProviderError && error.code === "DID_VIDEO_NOT_CONFIGURED",
+  );
+});
+
+test("HeyGen uploads a photo and prepares a reusable Photo Avatar", async () => {
+  const requests = [];
+  const provider = createHeyGenVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "heygen",
+      HEYGEN_API_KEY: "test-key",
+      HEYGEN_BASE_URL: "https://api.heygen.test",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/v3/assets")) {
+        return new Response(JSON.stringify({ data: { asset_id: "photo-asset-1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        data: { avatar_item: { id: "photo-avatar-1", status: "completed" } },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const task = await provider.createTask({ imageBase64: rawPngBase64, idempotencyKey: "avatar-job-1" });
+  assert.deepEqual(task, {
+    taskId: "photo-avatar-1",
+    providerAssetId: "photo-asset-1",
+    status: "ready",
+    prepared: true,
+    videoUrl: null,
+  });
+  assert.equal(requests[0].url, "https://api.heygen.test/v3/assets");
+  assert.equal(requests[0].init.headers["x-api-key"], "test-key");
+  assert.equal(requests[0].init.headers["Idempotency-Key"], "avatar-job-1:image");
+  assert.ok(requests[0].init.body instanceof FormData);
+  assert.equal(requests[0].init.body.get("file").type, "image/png");
+  const avatarBody = JSON.parse(requests[1].init.body);
+  assert.equal(requests[1].url, "https://api.heygen.test/v3/avatars");
+  assert.equal(avatarBody.type, "photo");
+  assert.deepEqual(avatarBody.file, { type: "asset_id", asset_id: "photo-asset-1" });
+});
+
+test("HeyGen renders ElevenLabs audio with content-matched expression and gesture", async () => {
+  const requests = [];
+  let videoPolls = 0;
+  const provider = createHeyGenVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "heygen",
+      HEYGEN_API_KEY: "test-key",
+      HEYGEN_BASE_URL: "https://api.heygen.test",
+    },
+    pollIntervalMs: 1,
+    replyTimeoutMs: 100,
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/v3/assets") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { asset_id: "reply-audio-1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { video_id: "reply-video-1", status: "pending" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos/reply-video-1")) {
+        videoPolls += 1;
+        return new Response(JSON.stringify({
+          data: {
+            video_id: "reply-video-1",
+            status: "completed",
+            video_url: "https://files.heygen.test/reply.mp4",
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/v3/assets/reply-audio-1") && init.method === "DELETE") {
+        return new Response(JSON.stringify({ data: { id: "reply-audio-1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const result = await provider.renderReply({
+    avatarId: "photo-avatar-1",
+    audioBytes: Buffer.from("ID3-cloned-voice"),
+    audioMimeType: "audio/mpeg",
+    decision: { supportMode: "celebrate", emotion: ["joy"] },
+    idempotencyKey: "reply-request-1",
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.videoUrl, "https://files.heygen.test/reply.mp4");
+  assert.equal(videoPolls, 1);
+  const createRequest = requests.find(({ url, init }) => url.endsWith("/v3/videos") && init.method === "POST");
+  const body = JSON.parse(createRequest.init.body);
+  assert.equal(body.avatar_id, "photo-avatar-1");
+  assert.equal(body.audio_asset_id, "reply-audio-1");
+  assert.deepEqual(
+    { prompt: body.motion_prompt, expressiveness: body.expressiveness },
+    heyGenMotionForDecision({ supportMode: "celebrate" }),
+  );
+  assert.deepEqual(body.engine, { type: "avatar_iv" });
+  assert.ok(requests.some(({ url, init }) => url.endsWith("/v3/assets/reply-audio-1") && init.method === "DELETE"));
+});
+
+test("HeyGen failures are typed without exposing provider response details", async () => {
+  const provider = createHeyGenVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "heygen", HEYGEN_API_KEY: "sensitive-key" },
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: { code: "insufficient_credits", message: "sensitive billing response" },
+    }), { status: 402, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    provider.verify(),
+    (error) => error instanceof HeyGenVideoProviderError
+      && error.code === "HEYGEN_HTTP_ERROR"
+      && error.status === 402
+      && error.providerCode === "insufficient_credits"
+      && !error.message.includes("sensitive billing response")
+      && !error.message.includes("sensitive-key"),
   );
 });
 

@@ -332,7 +332,7 @@ function videoStatusLabel(status) {
     not_started: "未作成",
     queued: "受付済み",
     processing: "生成中",
-    ready: "完成",
+    ready: "準備済み",
     failed: "要再試行",
     unavailable: "利用不可",
   }[status] ?? "未作成";
@@ -340,6 +340,15 @@ function videoStatusLabel(status) {
 
 function friendlyVideoFailureMessage(message) {
   const detail = String(message ?? "");
+  if (detail.includes("HEYGEN") && detail.includes("HTTP 401")) {
+    return "HeyGenのAPIキーを確認してください。";
+  }
+  if (detail.includes("HEYGEN") && detail.includes("HTTP 429")) {
+    return "HeyGenが混み合っているか、利用上限に達しています。少し待ってからもう一度お試しください。";
+  }
+  if (detail.includes("HEYGEN")) {
+    return "HeyGenで本人アバターを準備できませんでした。写真、利用枠、API設定を確認してください。";
+  }
   if (detail.includes("insufficient_user_quota")) {
     return "OrcaRouterの通常ウォレット残高が不足しています。請求画面で1回限りのクレジットを追加してから、もう一度お試しください。";
   }
@@ -362,7 +371,7 @@ function renderVideoGeneration(value = state.sample) {
   sampleVideoBadge.classList.toggle("is-failed", generation.status === "failed");
   videoConsentCheck.disabled = !active || working;
   generateVideoButton.disabled = !active || !videoConsentCheck.checked || working;
-  generateVideoButton.textContent = generation.status === "ready" ? "返信動画を作り直す" : "返信動画をつくる";
+  generateVideoButton.textContent = generation.status === "ready" ? "本人アバターを作り直す" : "本人アバターを準備する";
 
   if (generation.videoUrl) {
     if (sampleVideoPreview.src !== new URL(generation.videoUrl, location.href).href) {
@@ -375,12 +384,12 @@ function renderVideoGeneration(value = state.sample) {
     sampleVideoPreview.load();
   }
 
-  if (generation.status === "queued") videoGenerationStatus.textContent = "動画生成を受け付けました。順番を待っています。";
-  else if (generation.status === "processing") videoGenerationStatus.textContent = "保護者の返信動画を生成しています。画面を閉じても処理は続きます。";
-  else if (generation.status === "ready") videoGenerationStatus.textContent = "実動画を使う準備ができました。次の返答から再生されます。";
+  if (generation.status === "queued") videoGenerationStatus.textContent = "本人アバターの準備を受け付けました。順番を待っています。";
+  else if (generation.status === "processing") videoGenerationStatus.textContent = "本人アバターを準備しています。画面を閉じても処理は続きます。";
+  else if (generation.status === "ready") videoGenerationStatus.textContent = "本人アバターの準備ができました。次の返答から、内容に合う表情と身振りの動画を作ります。";
   else if (generation.status === "failed") videoGenerationStatus.textContent = friendlyVideoFailureMessage(generation.message);
   else if (generation.status === "unavailable") videoGenerationStatus.textContent = generation.message || "動画生成サービスを利用できません。接続設定を確認してください。";
-  else videoGenerationStatus.textContent = active ? "登録写真から返信動画を作成できます。" : "先に写真と声を登録してください。";
+  else videoGenerationStatus.textContent = active ? "登録写真から、表情と身振りをつける本人アバターを準備できます。" : "先に写真と声を登録してください。";
 }
 
 function renderSampling(sample) {
@@ -770,7 +779,7 @@ async function pollResponse(requestId) {
   state.pollAbort?.abort();
   state.pollAbort = new AbortController();
   const started = Date.now();
-  while (Date.now() - started < 90000) {
+  while (Date.now() - started < 240000) {
     const response = await profileFetch(`/api/responses/${encodeURIComponent(requestId)}`, { signal: state.pollAbort.signal });
     const data = await response.json();
     if (data.status === "READY") {

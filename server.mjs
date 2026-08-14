@@ -24,6 +24,8 @@ import { createLiveAvatarProvider, LiveAvatarProviderError } from "./lib/provide
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
+import { createTavusProvider, TavusProviderError } from "./lib/providers/tavus.mjs";
+import { createTavusTrainingAssetStore } from "./lib/tavus-training-assets.mjs";
 import { isChildHiragana, toChildHiragana } from "./lib/japanese-text.mjs";
 
 async function loadLocalEnvironment() {
@@ -49,6 +51,7 @@ const conversations = new Map();
 const technicalLogs = [];
 const generatedReplyAudio = new Map();
 const generatedReplyVideo = new Map();
+const tavusConversations = new Map();
 const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 24);
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
 const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 120);
@@ -68,6 +71,14 @@ const videoRequestTimeoutMs = Number(
     || 30,
 ) * 1000;
 const liveAvatarProvider = createLiveAvatarProvider();
+const tavusTrainingAssets = createTavusTrainingAssetStore({
+  publicBaseUrl: process.env.TAVUS_PUBLIC_BASE_URL,
+  ttlMs: Number(process.env.TAVUS_TRAINING_ASSET_TTL_SECONDS || 1800) * 1000,
+});
+const tavusProvider = createTavusProvider({
+  publishImage: tavusTrainingAssets.configured ? tavusTrainingAssets.publish : null,
+  deletePublishedImage: tavusTrainingAssets.deleteAsset,
+});
 const liveAvatarBatchPlaceholder = Object.freeze({
   name: "liveavatar",
   available: false,
@@ -86,6 +97,8 @@ const videoProvider = videoGenerationMode === "did"
     ? createHeyGenVideoProvider({ timeoutMs: videoRequestTimeoutMs })
     : videoGenerationMode === "liveavatar"
       ? liveAvatarBatchPlaceholder
+      : videoGenerationMode === "tavus"
+        ? tavusProvider
       : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
 const guardianVideoService = createGuardianVideoService({
   samplingStore: guardianSampling,
@@ -142,6 +155,17 @@ function sendPrivateMedia(res, media) {
   res.end(media.bytes);
 }
 
+function sendTavusTrainingAsset(res, media) {
+  res.writeHead(200, {
+    "content-type": media.mimeType,
+    "content-length": media.bytes.length,
+    "cache-control": "no-store, max-age=0",
+    "cross-origin-resource-policy": "cross-origin",
+    ...securityHeaders(),
+  });
+  res.end(media.bytes);
+}
+
 function storeGeneratedReplyAudio(media) {
   const accessToken = randomUUID();
   generatedReplyAudio.set(accessToken, {
@@ -164,7 +188,7 @@ function storeGeneratedReplyVideo(media) {
 
 function securityHeaders() {
   return {
-    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://api.liveavatar.com wss://api.liveavatar.com wss://webrtc-signaling.heygen.io wss://*.livekit.cloud https://*.livekit.cloud; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://api.liveavatar.com wss://api.liveavatar.com wss://webrtc-signaling.heygen.io wss://*.livekit.cloud https://*.livekit.cloud https://*.daily.co wss://*.daily.co; frame-src https://*.daily.co; worker-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     "permissions-policy": "camera=(), geolocation=(), payment=(), usb=()",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
@@ -200,7 +224,8 @@ function samplingApiView(status, videoGeneration = status.videoGeneration) {
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
     voiceCloningAvailable: status.voiceCloningAvailable === true,
     videoGeneration: videoGeneration ?? { status: "not_started" },
-    liveAvatar: liveAvatarProvider.status(),
+    liveAvatar: videoGenerationMode === "liveavatar" ? liveAvatarProvider.status() : null,
+    tavus: videoGenerationMode === "tavus" ? tavusProvider.status() : null,
   };
 }
 
@@ -550,6 +575,18 @@ function purgeExpiredData(now = Date.now()) {
       generatedReplyVideo.delete(accessToken);
     }
   }
+  tavusTrainingAssets.purge();
+  for (const [conversationId, conversation] of tavusConversations) {
+    if (now - conversation.createdAt > conversationTtlMs) tavusConversations.delete(conversationId);
+  }
+}
+
+async function endTavusConversationsForProfile(profileId, provider = tavusProvider) {
+  for (const [conversationId, conversation] of tavusConversations) {
+    if (conversation.profileId !== profileId) continue;
+    await provider.endConversation(conversationId);
+    tavusConversations.delete(conversationId);
+  }
 }
 
 function createAdultHandoff(current, decision, adultMessage) {
@@ -700,6 +737,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
   const activeVideoService = runtime.videoService ?? guardianVideoService;
   const activeLiveAvatarProvider = runtime.liveAvatarProvider ?? liveAvatarProvider;
+  const activeTavusProvider = runtime.tavusProvider ?? tavusProvider;
   const activeReplyVideoProvider = runtime.replyVideoProvider
     ?? (videoProvider.name === "heygen" ? videoProvider : null);
   let clonedReplyAudio = null;
@@ -721,7 +759,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   let responseBundle;
   let videoFailureReason = null;
   try {
-    const generatedVideo = registeredSample && videoGenerationMode !== "liveavatar"
+    const generatedVideo = registeredSample && !["liveavatar", "tavus"].includes(videoGenerationMode)
       ? activeVideoService.profileStatus?.(input.guardianProfileId)
         ?? guardianSampling.status(input.guardianProfileId).videoGeneration
       : null;
@@ -823,7 +861,25 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     speechRate: registeredSample?.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
     liveAvatar: Object.freeze({
       ...activeLiveAvatarProvider.status(),
-      eligible: Boolean(registeredSample && clonedReplyAudioUrl && activeLiveAvatarProvider.available),
+      eligible: Boolean(
+        videoGenerationMode === "liveavatar"
+        && registeredSample
+        && clonedReplyAudioUrl
+        && activeLiveAvatarProvider.available
+      ),
+    }),
+    tavus: Object.freeze({
+      ...activeTavusProvider.status(),
+      eligible: Boolean(
+        videoGenerationMode === "tavus"
+        && registeredSample
+        && clonedReplyAudioUrl
+        && activeTavusProvider.streamingAvailable
+      ),
+      customFaceReady: Boolean(
+        videoGenerationMode === "tavus"
+        && activeVideoService.profileProviderTaskId?.(input.guardianProfileId)
+      ),
     }),
     responseBundle,
     bundle: responseBundle,
@@ -856,6 +912,20 @@ async function apiHandler(req, res, url, runtime = {}) {
   const videoService = runtime.videoService ?? guardianVideoService;
   const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
   const activeLiveAvatarProvider = runtime.liveAvatarProvider ?? liveAvatarProvider;
+  const activeTavusProvider = runtime.tavusProvider ?? tavusProvider;
+  const tavusTrainingAssetMatch = url.pathname.match(/^\/api\/tavus\/training-assets\/([^/]+)$/);
+  if (req.method === "GET" && tavusTrainingAssetMatch) {
+    let assetId;
+    try {
+      assetId = decodeURIComponent(tavusTrainingAssetMatch[1]);
+    } catch {
+      assetId = "";
+    }
+    const media = assetId ? tavusTrainingAssets.read(assetId) : null;
+    if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendTavusTrainingAsset(res, media);
+    return true;
+  }
   const generatedAudioMatch = url.pathname.match(/^\/api\/generated-audio\/([^/]+)$/);
   if (req.method === "GET" && generatedAudioMatch) {
     let accessToken;
@@ -923,6 +993,90 @@ async function apiHandler(req, res, url, runtime = {}) {
     } catch (error) {
       const statusCode = error instanceof LiveAvatarProviderError && error.status === 401 ? 401 : 503;
       sendJson(res, statusCode, { error: error.code || "LIVEAVATAR_SESSION_FAILED" });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/tavus/conversation") {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 4 * 1024);
+      if (input.externalProcessingApproved !== true) {
+        sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
+        return true;
+      }
+      const sample = guardianSampling.resolve(profileId, input.consentId, input.avatarAssetId);
+      if (!sample) {
+        sendJson(res, 409, { error: "SAMPLING_NOT_REGISTERED" });
+        return true;
+      }
+      const customFaceId = videoService.profileProviderTaskId?.(profileId);
+      const conversation = await activeTavusProvider.createConversation({
+        faceId: customFaceId || activeTavusProvider.fallbackFaceId,
+      });
+      tavusConversations.set(conversation.conversationId, { profileId, createdAt: Date.now() });
+      sendJson(res, 201, {
+        conversationId: conversation.conversationId,
+        conversationUrl: conversation.conversationUrl,
+        meetingToken: conversation.meetingToken,
+        customFace: Boolean(customFaceId),
+        tavus: activeTavusProvider.status(),
+      });
+    } catch (error) {
+      const statusCode = error instanceof TavusProviderError
+        ? error.status === 401 ? 401 : error.status === 429 ? 429 : 503
+        : 503;
+      sendJson(res, statusCode, { error: error.code || "TAVUS_CONVERSATION_FAILED" });
+    }
+    return true;
+  }
+  const tavusEndMatch = url.pathname.match(/^\/api\/tavus\/conversations\/([^/]+)\/end$/);
+  if (req.method === "POST" && tavusEndMatch) {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    let conversationId;
+    try {
+      conversationId = decodeURIComponent(tavusEndMatch[1]).trim();
+    } catch {
+      conversationId = "";
+    }
+    const owned = tavusConversations.get(conversationId);
+    if (!owned || owned.profileId !== profileId) {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    try {
+      await activeTavusProvider.endConversation(conversationId);
+      tavusConversations.delete(conversationId);
+      sendJson(res, 200, { ended: true });
+    } catch (error) {
+      sendJson(res, 503, { error: error.code || "TAVUS_END_FAILED" });
     }
     return true;
   }
@@ -1156,7 +1310,10 @@ async function apiHandler(req, res, url, runtime = {}) {
           : null;
         let created;
         try {
-          if (previousStatus.configured) await videoService.deleteRemote?.(profileId);
+          if (previousStatus.configured) {
+            await endTavusConversationsForProfile(profileId, activeTavusProvider);
+            await videoService.deleteRemote?.(profileId);
+          }
           created = guardianSampling.register(profileId, input, { voiceClone: clonedVoice });
         } catch (error) {
           if (clonedVoice?.voiceId) await activeVoiceProvider.deleteVoice(clonedVoice.voiceId).catch(() => {});
@@ -1204,11 +1361,12 @@ async function apiHandler(req, res, url, runtime = {}) {
         }
       }
       try {
+        await endTavusConversationsForProfile(profileId, activeTavusProvider);
         await videoService.deleteRemote?.(profileId);
       } catch {
         sendJson(res, 502, {
-          error: "HEYGEN_AVATAR_DELETE_FAILED",
-          message: "HeyGen上の本人アバターを削除できませんでした。接続を確認してもう一度お試しください。",
+          error: "REMOTE_AVATAR_DELETE_FAILED",
+          message: "外部サービス上の本人アバターを削除できませんでした。接続を確認してもう一度お試しください。",
         });
         return true;
       }
@@ -1229,12 +1387,16 @@ async function apiHandler(req, res, url, runtime = {}) {
       preRecordedVideoConfigured: Boolean(process.env.PREGENERATED_VIDEO_URL),
       videoGenerationMode,
       videoGenerationProvider: videoProvider.name,
-      videoGenerationConfigured: videoProvider.available,
+      videoGenerationConfigured: videoGenerationMode === "tavus"
+        ? tavusProvider.streamingAvailable
+        : videoProvider.available,
       replyMotionConfigured: videoProvider.name === "heygen" && videoProvider.available,
       liveAvatarConfigured: liveAvatarProvider.available,
       liveAvatarMode: liveAvatarProvider.status().mode,
       liveAvatarSandbox: liveAvatarProvider.sandbox,
       liveAvatarCustomAvatarConfigured: liveAvatarProvider.customAvatarConfigured,
+      tavusConfigured: tavusProvider.streamingAvailable,
+      tavusFaceCreationConfigured: tavusProvider.faceCreationAvailable,
       voiceCloningMode,
       voiceCloningProvider: activeVoiceProvider.name,
       voiceCloningConfigured: activeVoiceProvider.available,
@@ -1274,6 +1436,7 @@ async function apiHandler(req, res, url, runtime = {}) {
           if (previousSample?.voiceClone?.voiceId && activeVoiceProvider.available) {
             await activeVoiceProvider.deleteVoice(previousSample.voiceClone.voiceId).catch(() => {});
           }
+          await endTavusConversationsForProfile(profileId, activeTavusProvider).catch(() => {});
           await videoService.deleteRemote?.(profileId).catch(() => {});
           guardianSampling.revoke(profileId);
         }
@@ -1469,6 +1632,7 @@ export function createAppServer(options = {}) {
     videoDownloader: options.videoDownloader ?? downloadGeneratedVideo,
     voiceCloningProvider: options.voiceCloningProvider ?? voiceCloningProvider,
     liveAvatarProvider: options.liveAvatarProvider ?? liveAvatarProvider,
+    tavusProvider: options.tavusProvider ?? tavusProvider,
   };
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");

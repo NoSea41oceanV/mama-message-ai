@@ -25,6 +25,8 @@ import {
   LiveAvatarProviderError,
   createLiveAvatarProvider,
 } from "../lib/providers/liveavatar.mjs";
+import { TavusProviderError, createTavusProvider } from "../lib/providers/tavus.mjs";
+import { createTavusTrainingAssetStore } from "../lib/tavus-training-assets.mjs";
 import { SttProviderError, createSttProvider } from "../lib/providers/stt.mjs";
 import { ElevenLabsError, createElevenLabsProvider } from "../lib/providers/elevenlabs.mjs";
 import {
@@ -668,6 +670,127 @@ test("LiveAvatar requires a custom avatar outside sandbox and keeps failures typ
       && error.status === 401
       && error.providerCode === "invalid_api_key"
       && !error.message.includes("private detail"),
+  );
+});
+
+test("Tavus creates a private Echo conversation without exposing its API key", async () => {
+  let request;
+  const provider = createTavusProvider({
+    env: {
+      TAVUS_API_KEY: "tavus-secret",
+      TAVUS_BASE_URL: "https://api.tavus.test",
+      TAVUS_PAL_ID: "pal-echo",
+      TAVUS_FACE_ID: "face-public",
+    },
+    fetchImpl: async (url, init) => {
+      request = { url, init, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        conversation_id: "conversation-1",
+        conversation_url: "https://room.daily.co/conversation-1",
+        meeting_token: "short-lived-meeting-token",
+        status: "active",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const result = await provider.createConversation();
+  assert.equal(provider.streamingAvailable, true);
+  assert.equal(provider.available, false);
+  assert.equal(request.url, "https://api.tavus.test/v2/conversations");
+  assert.equal(request.init.headers["x-api-key"], "tavus-secret");
+  assert.deepEqual(request.body, {
+    face_id: "face-public",
+    pal_id: "pal-echo",
+    conversation_name: "Mama Message",
+    audio_only: false,
+    require_auth: true,
+    max_participants: 2,
+    properties: {
+      max_call_duration: 300,
+      participant_left_timeout: 5,
+      participant_absent_timeout: 30,
+    },
+  });
+  assert.equal(result.meetingToken, "short-lived-meeting-token");
+  assert.equal(JSON.stringify(provider.status()).includes("tavus-secret"), false);
+});
+
+test("Tavus trains and deletes a Face through a short-lived public image URL", async () => {
+  const requests = [];
+  const deletedAssets = [];
+  const provider = createTavusProvider({
+    env: {
+      TAVUS_API_KEY: "test-key",
+      TAVUS_BASE_URL: "https://api.tavus.test",
+      TAVUS_PAL_ID: "pal-echo",
+      TAVUS_FACE_ID: "face-public",
+    },
+    publishImage: async () => ({ assetId: "asset-1", url: "https://app.test/api/tavus/training-assets/asset-1" }),
+    deletePublishedImage: async (assetId) => { deletedAssets.push(assetId); return true; },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+      if (url.endsWith("/v2/faces") && init.method === "POST") {
+        return new Response(JSON.stringify({ face_id: "face-custom", status: "started" }), { status: 200 });
+      }
+      if (url.endsWith("/v2/faces/face-custom") && init.method === "GET") {
+        return new Response(JSON.stringify({ face_id: "face-custom", status: "completed" }), { status: 200 });
+      }
+      if (url.endsWith("/v2/faces/face-custom") && init.method === "DELETE") {
+        return new Response("{}", { status: 200 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const created = await provider.createTask({ imageBase64: rawPngBase64, mimeType: "image/png", idempotencyKey: "job-1" });
+  assert.deepEqual(created, { taskId: "face-custom", providerAssetId: "asset-1", status: "queued" });
+  assert.equal(requests[0].body.train_image_url, "https://app.test/api/tavus/training-assets/asset-1");
+  assert.equal(requests[0].body.voice_name, "anna");
+  assert.equal(requests[0].body.auto_fix_training_image, true);
+  const ready = await provider.getTask("face-custom");
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.prepared, true);
+  assert.equal(ready.cleanupProviderAsset, true);
+  assert.equal(await provider.deleteAsset("asset-1"), true);
+  assert.deepEqual(deletedAssets, ["asset-1"]);
+  assert.equal(await provider.deleteTask("face-custom"), true);
+});
+
+test("Tavus training assets require a public HTTPS origin and erase bytes on delete", async () => {
+  const disabled = createTavusTrainingAssetStore({ publicBaseUrl: "http://127.0.0.1:4173" });
+  assert.equal(disabled.configured, false);
+  await assert.rejects(disabled.publish({ imageBase64: rawPngBase64, mimeType: "image/png" }), /TAVUS_PUBLIC_URL_REQUIRED/);
+
+  const store = createTavusTrainingAssetStore({
+    publicBaseUrl: "https://app.example.test/",
+    idFactory: () => "unguessable-test-token",
+  });
+  const published = await store.publish({ imageBase64: rawPngBase64, mimeType: "image/png" });
+  assert.equal(published.url, "https://app.example.test/api/tavus/training-assets/unguessable-test-token");
+  assert.equal(store.read(published.assetId).mimeType, "image/png");
+  assert.equal(await store.deleteAsset(published.assetId), true);
+  assert.equal(store.read(published.assetId), null);
+});
+
+test("Tavus keeps provider failures typed and hides response details", async () => {
+  const provider = createTavusProvider({
+    env: {
+      TAVUS_API_KEY: "sensitive-key",
+      TAVUS_BASE_URL: "https://api.tavus.test",
+      TAVUS_PAL_ID: "pal-echo",
+      TAVUS_FACE_ID: "face-public",
+    },
+    fetchImpl: async () => new Response(JSON.stringify({ error: "Invalid API key sensitive-key" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  await assert.rejects(
+    provider.createConversation(),
+    (error) => error instanceof TavusProviderError
+      && error.code === "TAVUS_HTTP_ERROR"
+      && error.status === 401
+      && !error.message.includes("sensitive-key"),
   );
 });
 

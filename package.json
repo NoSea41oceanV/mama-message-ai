@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build:liveavatar-sdk": "esbuild node_modules/@heygen/liveavatar-web-sdk/lib/index.esm.js --bundle --format=iife --global-name=LiveAvatarSDK --platform=browser --target=es2022 --minify --outfile=public/vendor/liveavatar-sdk.js",
-    "prestart": "npm run build:liveavatar-sdk",
+    "build:daily-sdk": "esbuild node_modules/@daily-co/daily-js/dist/daily-esm.js --bundle --format=iife --global-name=DailySDK --platform=browser --target=es2022 --minify --outfile=public/vendor/daily-sdk.js",
+    "build:browser-sdks": "npm run build:liveavatar-sdk && npm run build:daily-sdk",
+    "prestart": "npm run build:browser-sdks",
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "test": "node --test",
@@ -15,6 +17,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@daily-co/daily-js": "^0.92.0",
     "@heygen/liveavatar-web-sdk": "^0.0.18",
     "esbuild": "^0.25.9",
     "kuroshiro": "^1.2.0",

@@ -6,7 +6,7 @@
 
 子どもの主入力は音声です。大きなマイクボタンをタップして録音を始め、もう一度タップして止めます。録音中は波形、経過時間、「きいているよ」を表示し、停止後は音声認識したテキストを確認して「おくる」または「もういちど」を選べます。マイクの許可がない場合や認識に失敗した場合は、子ども向けの短い文言で再試行を案内します。文章入力は主導線にせず、デモを止めないためのフォールバックとしてのみ残します。
 
-送信後は「おへんじをとどける準備をしているよ」と表示し、返答メディアと字幕がそろってから1つの返答として再生します。現在のアプリはOrcaRouterで`safetyLevel`、`supportMode`、`emotion`と返答文を構造化し、通常返答・保護者アバター返答・安全引き継ぎを監督します。LiveAvatarモードでは、ElevenLabsのクローン音声をLITEセッションへ送り、口の動き・表情・自然な身振りを含む映像をリアルタイム再生します。判定不能時は通常返信へ流さず同席大人へ引き継ぎます。
+送信後は「おへんじをとどける準備をしているよ」と表示し、返答メディアと字幕がそろってから1つの返答として再生します。現在のアプリはOrcaRouterで`safetyLevel`、`supportMode`、`emotion`と返答文を構造化し、通常返答・保護者アバター返答・安全引き継ぎを監督します。Tavusモードでは、ElevenLabsのクローン音声をEchoセッションへ送り、口の動き・表情・自然な身振りを含む映像をリアルタイム再生します。判定不能時は通常返信へ流さず同席大人へ引き継ぎます。
 
 主デモは、母親が仕事中に父親と過ごしている子どもが、嬉しかったことや寂しい気持ちを声で伝える場面です。その場にいる父親・母親・祖父母などが必要に応じて操作を助け、子どもに寄り添います。「駄々をこねる子を黙らせる」用途ではなく、その場の大人が寄り添う際の気持ちの切り替えを補助します。
 
@@ -48,8 +48,9 @@ Node.jsアプリとして、次のMUST経路を実装しています。
 
 - 本人同意済みデモ素材のサーバー検証
 - 大人向け画面での保護者写真・最大2分（1〜2分推奨）の音声サンプル登録、ElevenLabs Instant Voice Clone、顔・声ごとの明示同意、プレビュー、プロフィール別の永続保存・削除
-- LiveAvatar LITEで、返答ごとのElevenLabs音声・表情・身振り・口の動きを同期するリアルタイム映像
-- LiveAvatarへの明示同意、短時間セッションキーのサーバー発行、期限前の自動再接続、音声フォールバック
+- Tavus Echoで、返答ごとのElevenLabs音声・表情・身振り・口の動きを同期するリアルタイム映像
+- Tavusへの明示同意、非公開Daily通話の短時間トークン、APIによる本人Face作成、音声フォールバック
+- 代替経路としてLiveAvatar LITEのリアルタイム映像
 - 旧経路として、登録写真からHeyGen Photo AvatarまたはD-ID/Kling動画を非同期準備するプロバイダー境界
 - 生成済みMP4・動的読み上げ・字幕を同時再生するLEVEL 1返答と、未生成時のLEVEL 3写真フォールバック
 - 大人向け画面からの素材利用停止・再開と、停止中の生成遮断
@@ -69,9 +70,9 @@ Node.jsアプリとして、次のMUST経路を実装しています。
 - 通常・生成失敗・安全・同意不備・冪等性・ログ秘匿を含む自動テスト
 - CSP、Permissions Policy、入力長制限、危険・誤認表現の返答拒否
 
-既定起動はキー不要のデモモードです。`VOICE_CLONING_PROVIDER=elevenlabs`を設定した実接続では、大人向け画面から保護者の写真と最大2分（1〜2分推奨）の音声を登録すると、ElevenLabs Instant Voice Cloneの`voice_id`を作成します。LiveAvatarモードの会話時は、OrcaRouterの返答文をElevenLabsの日本語TTSへ送り、24kHz・16-bit・mono PCMへ変換してLiveAvatar LITEへ渡します。LiveAvatarに接続できない場合は、登録写真とクローン音声を使うLEVEL 3へ戻ります。
+既定起動はキー不要のデモモードです。`VOICE_CLONING_PROVIDER=elevenlabs`を設定した実接続では、大人向け画面から保護者の写真と最大2分（1〜2分推奨）の音声を登録すると、ElevenLabs Instant Voice Cloneの`voice_id`を作成します。Tavusモードの会話時は、OrcaRouterの返答文をElevenLabsの日本語TTSへ送り、24kHz・16-bit・mono PCMへ変換してTavus Echoへ渡します。Tavusに接続できない場合は、登録写真とクローン音声を使うLEVEL 3へ戻ります。
 
-写真、元音声、生成MP4、ElevenLabsの`voice_id`はブラウザが保持するランダムな保護者プロフィールIDごとに分離し、サーバー専用の `.data` へAES-256-GCMで暗号化保存します。APIキーと`voice_id`はブラウザへ返しません。同じブラウザではサーバー再起動後も自動復元され、別プロフィールからは参照できません。素材の再登録・削除・同意停止では生成動画を含む暗号化データと素材URLを失効させ、削除時はElevenLabs上のクローン削除も試みます。LiveAvatarのAPIキーもサーバーだけが保持し、ブラウザへ返すのは同意確認後に発行した短時間セッションキーだけです。
+写真、元音声、生成MP4、ElevenLabsの`voice_id`はブラウザが保持するランダムな保護者プロフィールIDごとに分離し、サーバー専用の `.data` へAES-256-GCMで暗号化保存します。APIキーと`voice_id`はブラウザへ返しません。同じブラウザではサーバー再起動後も自動復元され、別プロフィールからは参照できません。素材の再登録・削除・同意停止では生成動画を含む暗号化データと素材URLを失効させ、削除時はElevenLabs上のクローン削除も試みます。TavusのAPIキーもサーバーだけが保持し、ブラウザへ返すのは同意確認後に発行した非公開通話の短時間トークンだけです。
 
 提出準備物:
 
@@ -90,7 +91,7 @@ npm start
 
 ブラウザで `http://127.0.0.1:4173` を開きます。マイク権限を使わずに確認する場合は、画面の「デモ音声で進める」を選択します。
 
-実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。会話判定は`ROUTER_PROVIDER=orcarouter`、リアルタイム映像は`VIDEO_GENERATION_PROVIDER=liveavatar`、実STTは必要に応じて`STT_PROVIDER=openai`を指定してください。動画処理は大人向け画面で外部送信同意を確認した場合だけ開始されます。`VIDEO_GENERATION_PROVIDER=disabled`へ戻すとキーが残っていても写真・返信音声を動画サービスへ送信しません。
+実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。会話判定は`ROUTER_PROVIDER=orcarouter`、リアルタイム映像は`VIDEO_GENERATION_PROVIDER=tavus`、実STTは必要に応じて`STT_PROVIDER=openai`を指定してください。動画処理は大人向け画面で外部送信同意を確認した場合だけ開始されます。`VIDEO_GENERATION_PROVIDER=disabled`へ戻すとキーが残っていても写真・返信音声を動画サービスへ送信しません。
 
 ### ElevenLabs音声クローンの設定
 
@@ -107,7 +108,21 @@ ELEVENLABS_SPEAKER_BOOST=true
 
 保護者素材画面で1〜2分、普段その子に話すときの速さ・抑揚・間で自然に読み上げ、外部送信を含む声の利用同意を確認して登録します。登録完了後に「音声クローン済み」と表示されれば、次の通常返答からクローン音声が使われます。TTS時は録音の話し方を残しやすい既定値として、安定性`0.45`、類似度`0.85`、スタイル`0.2`、話者ブースト有効を使います。APIキーはサーバーだけが参照し、ブラウザやAPIレスポンスへ返しません。
 
-### LiveAvatarの設定
+### Tavusの設定
+
+```dotenv
+VIDEO_GENERATION_PROVIDER=tavus
+TAVUS_API_KEY=YOUR_SERVER_SIDE_API_KEY
+TAVUS_BASE_URL=https://tavusapi.com
+TAVUS_PAL_ID=YOUR_ECHO_PAL_ID
+TAVUS_FACE_ID=YOUR_FALLBACK_FACE_ID
+TAVUS_PUBLIC_BASE_URL=https://YOUR_PUBLIC_APP_ORIGIN
+TAVUS_MAX_CALL_DURATION_SECONDS=300
+```
+
+Tavus Echoはアプリ側のOrcaRouter・ElevenLabsをそのまま使い、Tavusには生成済み音声を渡して顔をリアルタイム描画させます。通話は`require_auth`を有効にした2人限定の非公開Dailyルームで、既定では最長5分です。本人Faceは大人向け画面で明示同意した場合だけ作成し、Tavusが登録写真を取得する短時間URLは30分で失効します。`TAVUS_PUBLIC_BASE_URL`にはTavusから到達可能な公開HTTPSオリジンが必要なため、ローカルだけでは公開テストFaceでの接続確認になります。
+
+### LiveAvatarの設定（代替経路）
 
 ```dotenv
 VIDEO_GENERATION_PROVIDER=liveavatar
@@ -154,7 +169,7 @@ Klingが`HTTP 403`を返す場合は、OrcaRouter DashboardでAPIキー個別の
 
 2026-08-14時点のハッカソン環境では、APIキーが有効、上限`$20`、モデル制限なし、プロモーションクレジット`$19.98`（全モデル対象）であることを確認済みです。動画APIのエラー本文は`insufficient_user_quota`で、通常ウォレット`$0.00`に対して動画の事前確保額が不足していることを示していました。KlingとMiniMax、画像ありと画像なし、`/v1/video/generations`と`/v1/videos`の全組み合わせで同じ結果のため、画像形式・プロンプト・特定モデルではなく、プロモーションクレジットが動画の事前確保に算入されないことが原因です。請求画面では1回限りの最低チャージ額が`$1`で、チャージ後は素材画面の「返信動画をつくる」を押し直すだけで再生成できます。
 
-2026-08-15のライブ確認では、OrcaRouterの`openai/gpt-5.6-luna`、ElevenLabsクローン音声、LiveAvatar LITEサンドボックスの1280×720映像まで完走しました。同一画面の二往復目でも、サンドボックス期限前の自動再接続と会話継続を確認済みです。
+2026-08-15のライブ確認では、OrcaRouterの`openai/gpt-5.6-luna`とElevenLabsクローン音声まで完走しています。LiveAvatar LITEではサンドボックスの1280×720映像と同一画面の二往復、TavusではEcho PAL・公開テストFace・非公開ルームの作成と終了を確認済みです。
 
 ```powershell
 node --test

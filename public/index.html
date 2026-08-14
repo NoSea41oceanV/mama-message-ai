@@ -211,15 +211,15 @@
           <div class="video-generation-heading">
             <div>
               <p class="section-label">リアルタイム動画</p>
-              <h4 id="videoGenerationTitle">LiveAvatar</h4>
+              <h4 id="videoGenerationTitle">リアルタイムFace</h4>
             </div>
             <span class="sample-badge" id="sampleVideoBadge">未作成</span>
           </div>
           <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
-          <p class="video-generation-copy">返答音声から、待ち時間の少ない口の動き・表情・自然な身振りをリアルタイム生成します。本人のLiveAvatarは公式管理画面での作成と同意確認が必要です。</p>
+          <p class="video-generation-copy">返答音声から、待ち時間の少ない口の動き・表情・自然な身振りをリアルタイム生成します。Tavusでは、本人同意を確認した登録写真から本人Faceも作成できます。</p>
           <label class="check-row sample-consent">
             <input id="videoConsentCheck" type="checkbox">
-            <span id="videoConsentDescription">返信音声をLiveAvatarへ送信し、リアルタイム動画を生成することに同意します</span>
+            <span id="videoConsentDescription">返信音声を外部サービスへ送信し、リアルタイム動画を生成することに同意します</span>
           </label>
           <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled hidden>接続を確認する</button>
           <p class="sample-note">接続できない場合は、動かない写真とクローン音声へ自動で戻ります。写真を傾ける擬似動画は使いません。</p>
@@ -239,6 +239,7 @@
     </dialog>
 
     <script src="/vendor/liveavatar-sdk.js?v=1"></script>
-    <script type="module" src="/app.js?v=28"></script>
+    <script src="/vendor/daily-sdk.js?v=1"></script>
+    <script type="module" src="/app.js?v=30"></script>
   </body>
 </html>

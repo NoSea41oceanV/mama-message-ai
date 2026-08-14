@@ -13,6 +13,10 @@ process.env.ELEVENLABS_API_KEY = "";
 process.env.LIVEAVATAR_API_KEY = "";
 process.env.LIVEAVATAR_AVATAR_ID = "";
 process.env.LIVEAVATAR_SANDBOX = "true";
+process.env.TAVUS_API_KEY = "";
+process.env.TAVUS_PAL_ID = "";
+process.env.TAVUS_FACE_ID = "";
+process.env.TAVUS_PUBLIC_BASE_URL = "";
 
 const {
   buildReply,
@@ -437,6 +441,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "faceApproved",
     "favoriteTopics",
     "liveAvatar",
+    "tavus",
     "posterUrl",
     "speechRate",
     "subjectLabel",
@@ -998,6 +1003,96 @@ test("LiveAvatar token endpoint keeps the API key server-side and requires profi
     });
     assert.equal(wrongProfile.status, 409);
     assert.equal(tokenCalls, 1);
+  } finally {
+    await fetch(`${isolatedBaseUrl}/api/sampling`, { method: "DELETE", headers }).catch(() => {});
+    await new Promise((resolve) => isolatedServer.close(resolve));
+  }
+});
+
+test("Tavus conversation endpoint keeps the API key server-side and enforces profile ownership", async () => {
+  const profileId = "77777777-7777-4777-8777-777777777777";
+  let createCalls = 0;
+  let endedConversationId = null;
+  const tavusProvider = {
+    streamingAvailable: true,
+    faceCreationAvailable: false,
+    fallbackFaceId: "public-face",
+    status: () => ({
+      available: true,
+      configured: true,
+      streamingAvailable: true,
+      faceCreationAvailable: false,
+      palConfigured: true,
+      fallbackFaceConfigured: true,
+      status: "ready",
+    }),
+    async createConversation({ faceId }) {
+      createCalls += 1;
+      assert.equal(faceId, "public-face");
+      return {
+        conversationId: "tavus-conversation-1",
+        conversationUrl: "https://room.daily.co/tavus-conversation-1",
+        meetingToken: "short-lived-meeting-token",
+        status: "active",
+      };
+    },
+    async endConversation(conversationId) {
+      endedConversationId = conversationId;
+      return true;
+    },
+  };
+  const isolatedServer = createAppServer({ tavusProvider });
+  await new Promise((resolve) => isolatedServer.listen(0, "127.0.0.1", resolve));
+  const isolatedBaseUrl = `http://127.0.0.1:${isolatedServer.address().port}`;
+  const headers = { "content-type": "application/json", "x-guardian-profile-id": profileId };
+  try {
+    const missingConsent = await fetch(`${isolatedBaseUrl}/api/tavus/conversation`, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    assert.equal(missingConsent.status, 422);
+    assert.equal(createCalls, 0);
+
+    const sample = await (await fetch(`${isolatedBaseUrl}/api/sampling`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(samplingRegistration()),
+    })).json();
+    const createdResponse = await fetch(`${isolatedBaseUrl}/api/tavus/conversation`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        consentId: sample.consentId,
+        avatarAssetId: sample.avatarAssetId,
+        externalProcessingApproved: true,
+      }),
+    });
+    const created = await createdResponse.json();
+    assert.equal(createdResponse.status, 201);
+    assert.equal(created.conversationId, "tavus-conversation-1");
+    assert.equal(created.meetingToken, "short-lived-meeting-token");
+    assert.equal("apiKey" in created, false);
+    assert.equal(createCalls, 1);
+
+    const wrongProfileEnd = await fetch(`${isolatedBaseUrl}/api/tavus/conversations/tavus-conversation-1/end`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-guardian-profile-id": "66666666-7777-4777-8777-777777777777",
+      },
+      body: "{}",
+    });
+    assert.equal(wrongProfileEnd.status, 404);
+    assert.equal(endedConversationId, null);
+
+    const ended = await fetch(`${isolatedBaseUrl}/api/tavus/conversations/tavus-conversation-1/end`, {
+      method: "POST",
+      headers,
+      body: "{}",
+    });
+    assert.equal(ended.status, 200);
+    assert.equal(endedConversationId, "tavus-conversation-1");
   } finally {
     await fetch(`${isolatedBaseUrl}/api/sampling`, { method: "DELETE", headers }).catch(() => {});
     await new Promise((resolve) => isolatedServer.close(resolve));

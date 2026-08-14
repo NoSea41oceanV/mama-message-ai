@@ -69,6 +69,7 @@ const saveSampleButton = document.querySelector("#saveSampleButton");
 const deleteSampleButton = document.querySelector("#deleteSampleButton");
 const samplingStatus = document.querySelector("#samplingStatus");
 const sampleVideoBadge = document.querySelector("#sampleVideoBadge");
+const videoGenerationTitle = document.querySelector("#videoGenerationTitle");
 const sampleVideoPreview = document.querySelector("#sampleVideoPreview");
 const videoConsentCheck = document.querySelector("#videoConsentCheck");
 const videoConsentDescription = document.querySelector("#videoConsentDescription");
@@ -139,6 +140,14 @@ const state = {
   liveAvatarExpiresAt: 0,
   liveAvatarKeepAliveTimer: null,
   liveAvatarPcmCache: new Map(),
+  tavus: null,
+  tavusCall: null,
+  tavusConversationId: null,
+  tavusMediaStream: null,
+  tavusStreamReady: false,
+  tavusStartPromise: null,
+  tavusSpeaking: false,
+  tavusSpeakingTimer: null,
   responseUtterance: null,
 };
 
@@ -151,6 +160,7 @@ function showScreen(name) {
   if (state.screen === "response" && name !== "response") {
     stopSpeech();
     void stopLiveAvatarSession();
+    void stopTavusConversation();
   }
   state.screen = name;
   screens.forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === name));
@@ -346,6 +356,12 @@ function videoStatusLabel(status) {
 
 function friendlyVideoFailureMessage(message) {
   const detail = String(message ?? "");
+  if (detail.includes("TAVUS_PUBLIC_URL_REQUIRED")) {
+    return "本人Faceの作成には、Tavusが写真を取得できる公開HTTPS環境が必要です。";
+  }
+  if (detail.includes("TAVUS") && detail.includes("HTTP 401")) return "TavusのAPIキーを確認してください。";
+  if (detail.includes("TAVUS") && detail.includes("HTTP 429")) return "Tavusの利用上限に達しています。利用枠を確認してください。";
+  if (detail.includes("TAVUS")) return "Tavusで本人Faceを準備できませんでした。写真、利用枠、API設定を確認してください。";
   if (detail.includes("HEYGEN") && detail.includes("HTTP 401")) {
     return "HeyGenのAPIキーを確認してください。";
   }
@@ -367,8 +383,58 @@ function friendlyVideoFailureMessage(message) {
 }
 
 function renderVideoGeneration(value = state.sample) {
+  const tavus = value?.tavus ?? state.sample?.tavus ?? null;
+  if (tavus) {
+    videoGenerationTitle.textContent = "Tavus Face";
+    state.tavus = tavus;
+    const generation = normalizeVideoGeneration(value);
+    state.videoGeneration = generation;
+    const active = Boolean(state.sample?.configured && state.sample?.active);
+    const working = state.videoGenerationBusy || ["queued", "processing"].includes(generation.status);
+    const customFaceReady = generation.status === "ready";
+    sampleVideoPreview.hidden = true;
+    sampleVideoPreview.removeAttribute("src");
+    sampleVideoPreview.load();
+    generateVideoButton.hidden = false;
+    generateVideoButton.disabled = !active || !videoConsentCheck.checked || working || tavus.faceCreationAvailable !== true;
+    generateVideoButton.textContent = customFaceReady ? "本人Faceを作り直す" : "写真から本人Faceを作る";
+    videoConsentCheck.disabled = !active || tavus.streamingAvailable !== true || working;
+    sampleVideoBadge.classList.toggle("is-ready", tavus.streamingAvailable === true);
+    sampleVideoBadge.classList.toggle("is-progress", working);
+    sampleVideoBadge.classList.toggle("is-failed", generation.status === "failed");
+
+    if (!tavus.streamingAvailable) {
+      sampleVideoBadge.textContent = "未接続";
+      videoConsentDescription.textContent = "返信音声をTavusへ送信し、リアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = "Tavusへ接続できません。API設定を確認してください。";
+    } else if (customFaceReady) {
+      sampleVideoBadge.textContent = "本人Face準備済み";
+      videoConsentDescription.textContent = "返信音声をTavusの本人Faceへ送信し、リアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = "本人Faceを使えます。チェックを入れると、次の返答から表情と口の動く動画になります。";
+    } else if (working) {
+      sampleVideoBadge.textContent = generation.status === "queued" ? "受付済み" : "本人Face生成中";
+      videoConsentDescription.textContent = "登録写真と返信音声をTavusへ送信し、本人Faceとリアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = "Tavusで本人Faceを準備しています。画面を閉じても処理は続きます。";
+    } else if (generation.status === "failed") {
+      sampleVideoBadge.textContent = "要再試行";
+      videoConsentDescription.textContent = "登録写真と返信音声をTavusへ送信し、本人Faceとリアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = friendlyVideoFailureMessage(generation.message);
+    } else if (!tavus.faceCreationAvailable) {
+      sampleVideoBadge.textContent = "テスト接続済み";
+      videoConsentDescription.textContent = "返信音声をTavusの公開テストFaceへ送信し、動作確認することに同意します";
+      videoGenerationStatus.textContent = "リアルタイム接続は利用できます。本人Faceの作成には、Tavusが写真を取得できる公開HTTPS環境が必要です。";
+    } else {
+      sampleVideoBadge.textContent = "テスト接続済み";
+      videoConsentDescription.textContent = "登録写真と返信音声をTavusへ送信し、本人Faceとリアルタイム動画を生成することに同意します";
+      videoGenerationStatus.textContent = active
+        ? "現在は公開テストFaceです。同意を確認して「写真から本人Faceを作る」を押してください。"
+        : "先に写真と声を登録してください。";
+    }
+    return;
+  }
   const liveAvatar = value?.liveAvatar ?? state.sample?.liveAvatar ?? null;
   if (liveAvatar) {
+    videoGenerationTitle.textContent = "LiveAvatar";
     state.liveAvatar = liveAvatar;
     const active = Boolean(state.sample?.configured && state.sample?.active);
     sampleVideoPreview.hidden = true;
@@ -395,6 +461,7 @@ function renderVideoGeneration(value = state.sample) {
     return;
   }
   const generation = normalizeVideoGeneration(value);
+  videoGenerationTitle.textContent = "本人動画";
   state.videoGeneration = generation;
   const active = Boolean(state.sample?.configured && state.sample?.active);
   const working = state.videoGenerationBusy || ["queued", "processing"].includes(generation.status);
@@ -927,6 +994,16 @@ function liveAvatarCanPlay(data = state.response) {
   );
 }
 
+function tavusCanPlay(data = state.response) {
+  const Daily = globalThis.DailySDK?.default ?? globalThis.DailySDK;
+  return Boolean(
+    data?.tavus?.eligible
+    && videoConsentCheck.checked
+    && data?.responseBundle?.audioUrl
+    && Daily?.createCallObject,
+  );
+}
+
 async function responseAudioAsPcm24k(audioUrl) {
   if (state.liveAvatarPcmCache.has(audioUrl)) return state.liveAvatarPcmCache.get(audioUrl);
   const response = await fetch(audioUrl, { cache: "no-store" });
@@ -963,6 +1040,250 @@ async function responseAudioAsPcm24k(audioUrl) {
   }
   state.liveAvatarPcmCache.set(audioUrl, pcm);
   return pcm;
+}
+
+async function stopTavusConversation() {
+  clearTimeout(state.tavusSpeakingTimer);
+  state.tavusSpeakingTimer = null;
+  const call = state.tavusCall;
+  const conversationId = state.tavusConversationId;
+  const stream = state.tavusMediaStream;
+  state.tavusCall = null;
+  state.tavusConversationId = null;
+  state.tavusMediaStream = null;
+  state.tavusStreamReady = false;
+  state.tavusStartPromise = null;
+  state.tavusSpeaking = false;
+  stream?.getTracks().forEach((track) => track.stop());
+  if (responseVideo.srcObject === stream) responseVideo.srcObject = null;
+  if (call) {
+    await Promise.race([
+      call.leave().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+    await Promise.race([
+      call.destroy().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+  }
+  if (conversationId) {
+    await profileFetch(`/api/tavus/conversations/${encodeURIComponent(conversationId)}/end`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      keepalive: true,
+    }).catch(() => {});
+  }
+}
+
+function attachTavusParticipantTracks(participant, mediaStream) {
+  if (!participant || participant.local) return false;
+  let attachedVideo = false;
+  for (const kind of ["video", "audio"]) {
+    const trackState = participant.tracks?.[kind];
+    const track = trackState?.persistentTrack ?? trackState?.track ?? null;
+    if (!track || track.readyState === "ended") continue;
+    for (const existing of mediaStream.getTracks()) {
+      if (existing.kind === kind && existing.id !== track.id) mediaStream.removeTrack(existing);
+    }
+    if (!mediaStream.getTracks().some((existing) => existing.id === track.id)) mediaStream.addTrack(track);
+    if (kind === "video") attachedVideo = true;
+  }
+  return attachedVideo;
+}
+
+function safeTavusDailyError(event) {
+  const raw = [
+    event?.errorMsg,
+    event?.error?.msg,
+    event?.error?.message,
+    typeof event?.error === "string" ? event.error : null,
+    event?.action,
+  ].find((value) => typeof value === "string" && value.trim());
+  return String(raw || "unknown")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/[A-Za-z0-9_-]{40,}/g, "[redacted]")
+    .slice(0, 160);
+}
+
+async function startTavusConversation() {
+  if (state.tavusCall && state.tavusStreamReady) return state.tavusCall;
+  if (state.tavusStartPromise) return state.tavusStartPromise;
+  const Daily = globalThis.DailySDK?.default ?? globalThis.DailySDK;
+  if (!Daily?.createCallObject) throw new Error("TAVUS_DAILY_SDK_UNAVAILABLE");
+
+  state.tavusStartPromise = (async () => {
+    let response;
+    try {
+      response = await profileFetch("/api/tavus/conversation", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          consentId: state.consent?.consentId,
+          avatarAssetId: state.consent?.avatarAssetId,
+          externalProcessingApproved: videoConsentCheck.checked,
+        }),
+      });
+    } catch {
+      throw new Error("TAVUS_CONVERSATION_NETWORK_FAILED");
+    }
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.conversationUrl || !payload.meetingToken || !payload.conversationId) {
+      const code = /^[A-Z0-9_]{1,80}$/.test(payload.error) ? payload.error : "TAVUS_CONVERSATION_FAILED";
+      throw new Error(code);
+    }
+
+    const call = Daily.createCallObject({
+      audioSource: false,
+      videoSource: false,
+      subscribeToTracksAutomatically: true,
+    });
+    const mediaStream = new MediaStream();
+    state.tavusCall = call;
+    state.tavusConversationId = payload.conversationId;
+    state.tavusMediaStream = mediaStream;
+    responseVideo.srcObject = mediaStream;
+    responseVideo.hidden = false;
+    responseVideo.muted = false;
+    responseVideo.autoplay = true;
+    responseVideo.playsInline = true;
+
+    let resolveVideo;
+    const videoReady = new Promise((resolve) => { resolveVideo = resolve; });
+    let rejectDailyError;
+    const dailyError = new Promise((_, reject) => { rejectDailyError = reject; });
+    const attachParticipant = (participant) => {
+      if (attachTavusParticipantTracks(participant, mediaStream)) resolveVideo();
+      if (mediaStream.getVideoTracks().length) responseVideo.play().catch(() => {});
+    };
+    call.on("track-started", (event) => attachParticipant(event?.participant));
+    call.on("participant-updated", (event) => attachParticipant(event?.participant));
+    call.on("app-message", (event) => {
+      const eventType = String(event?.data?.event_type ?? event?.event_type ?? "");
+      if (eventType.includes("started_speaking")) {
+        state.tavusSpeaking = true;
+        mediaStage.classList.add("is-speaking");
+      } else if (eventType.includes("stopped_speaking")) {
+        state.tavusSpeaking = false;
+        mediaStage.classList.remove("is-speaking");
+      }
+    });
+    call.on("error", (event) => {
+      console.warn("Tavus Daily error", safeTavusDailyError(event));
+      rejectDailyError(new Error("TAVUS_DAILY_ERROR"));
+    });
+    call.on("left-meeting", () => {
+      if (state.tavusCall !== call) return;
+      const shouldResumeAudio = state.tavusSpeaking
+        && state.screen === "response"
+        && Boolean(state.response?.responseBundle?.audioUrl);
+      state.tavusCall = null;
+      state.tavusConversationId = null;
+      state.tavusMediaStream = null;
+      state.tavusStreamReady = false;
+      state.tavusStartPromise = null;
+      state.tavusSpeaking = false;
+      responseVideo.srcObject = null;
+      responseVideo.hidden = true;
+      if (shouldResumeAudio) {
+        responseRecordError.textContent = "どうががとまったので、おとのおへんじにきりかえたよ。";
+        responseAudio.currentTime = 0;
+        responseAudio.play().catch(() => mediaStage.classList.remove("is-speaking"));
+      }
+    });
+
+    let connectionTimer;
+    try {
+      await Promise.race([
+        call.join({
+          url: payload.conversationUrl,
+          token: payload.meetingToken,
+          userName: "Mama Message",
+          startAudioOff: true,
+          startVideoOff: true,
+        }),
+        dailyError,
+        new Promise((_, reject) => {
+          connectionTimer = setTimeout(() => reject(new Error("TAVUS_JOIN_TIMEOUT")), 20_000);
+        }),
+      ]);
+      clearTimeout(connectionTimer);
+      for (const participant of Object.values(call.participants())) attachParticipant(participant);
+      await Promise.race([
+        videoReady,
+        dailyError,
+        new Promise((_, reject) => {
+          connectionTimer = setTimeout(() => reject(new Error("TAVUS_STREAM_TIMEOUT")), 40_000);
+        }),
+      ]);
+      await responseVideo.play();
+    } catch (error) {
+      if (["TAVUS_JOIN_TIMEOUT", "TAVUS_STREAM_TIMEOUT", "TAVUS_DAILY_ERROR"].includes(error?.message)) throw error;
+      throw new Error("TAVUS_DAILY_JOIN_FAILED");
+    } finally {
+      clearTimeout(connectionTimer);
+    }
+    state.tavusStreamReady = true;
+    return call;
+  })();
+
+  try {
+    return await state.tavusStartPromise;
+  } catch (error) {
+    await stopTavusConversation();
+    throw error;
+  } finally {
+    state.tavusStartPromise = null;
+  }
+}
+
+async function playTavus(bundle) {
+  if (!tavusCanPlay()) return false;
+  try {
+    delete responseRecordError.dataset.tavusError;
+    responseTalkLead.textContent = "りあるたいむどうがを じゅんびしているよ";
+    const [call, pcm] = await Promise.all([
+      startTavusConversation(),
+      responseAudioAsPcm24k(bundle.audioUrl),
+    ]);
+    guardianPortrait.hidden = true;
+    neutralMedia.hidden = true;
+    responseVideo.hidden = false;
+    responseAudio.pause();
+    state.tavusSpeaking = true;
+    mediaStage.classList.add("is-speaking");
+    await Promise.resolve(call.sendAppMessage({
+      message_type: "conversation",
+      event_type: "conversation.echo",
+      conversation_id: state.tavusConversationId,
+      properties: {
+        modality: "audio",
+        audio: btoa(pcm),
+        sample_rate: 24000,
+        inference_id: crypto.randomUUID(),
+        done: "true",
+      },
+    }, "*"));
+    clearTimeout(state.tavusSpeakingTimer);
+    state.tavusSpeakingTimer = setTimeout(() => {
+      state.tavusSpeaking = false;
+      mediaStage.classList.remove("is-speaking");
+    }, Math.ceil((pcm.length / 48_000) * 1000) + 1_500);
+    responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+    return true;
+  } catch (error) {
+    const errorCode = /^[A-Z0-9_]{1,80}$/.test(error?.message)
+      ? error.message
+      : "TAVUS_UNKNOWN_FAILED";
+    responseRecordError.dataset.tavusError = errorCode;
+    console.warn("Tavus fallback", errorCode);
+    responseRecordError.textContent = "どうがにつながらなかったので、おとのおへんじにきりかえたよ。";
+    responseTalkLead.textContent = "このまま つづけて おはなしできるよ";
+    await stopTavusConversation();
+    guardianPortrait.hidden = !bundle.posterUrl;
+    responseVideo.hidden = true;
+    return false;
+  }
 }
 
 async function stopLiveAvatarSession() {
@@ -1130,7 +1451,8 @@ async function playLiveAvatar(bundle) {
 
 async function prepareResponse(data) {
   const bundle = data.responseBundle;
-  const keepLiveStream = liveAvatarCanPlay(data) && state.liveAvatarStreamReady;
+  const keepLiveStream = (liveAvatarCanPlay(data) && state.liveAvatarStreamReady)
+    || (tavusCanPlay(data) && state.tavusStreamReady);
   const responseScreen = document.querySelector('[data-screen="response"]');
   responseScreen.dataset.supportMode = data.supportMode ?? data.routerDecision?.supportMode ?? "listen";
   responseScreen.classList.toggle("is-neutral-response", bundle.parentLike === false);
@@ -1164,11 +1486,12 @@ async function prepareResponse(data) {
   }
 }
 
-function stopSpeech() {
+function stopSpeech(endTavus = false) {
   speechSynthesis.cancel();
   state.responseUtterance = null;
   if (state.liveAvatarStreamReady) state.liveAvatarSession?.interrupt();
-  else responseVideo.pause();
+  else if (!state.tavusStreamReady) responseVideo.pause();
+  if (endTavus) void stopTavusConversation();
   responseAudio.pause();
   mediaStage.classList.remove("is-speaking");
 }
@@ -1177,6 +1500,7 @@ async function playResponse() {
   if (!state.response?.responseBundle) return;
   stopSpeech();
   const bundle = state.response.responseBundle;
+  if (await playTavus(bundle)) return;
   if (await playLiveAvatar(bundle)) return;
   const hasVideo = Boolean(bundle.videoUrl);
   mediaStage.classList.add("is-speaking");
@@ -1257,6 +1581,7 @@ async function loadLogs() {
 
 function resetFlow() {
   stopSpeech();
+  void stopTavusConversation();
   void stopLiveAvatarSession();
   state.liveAvatarPcmCache.clear();
   stopTracks();
@@ -1380,7 +1705,7 @@ retryButton.addEventListener("click", () => showScreen("record"));
 confirmButton.addEventListener("click", createResponse);
 cancelButton.addEventListener("click", resetFlow);
 replayButton.addEventListener("click", playResponse);
-soundButton.addEventListener("click", stopSpeech);
+soundButton.addEventListener("click", () => stopSpeech(true));
 finishButton.addEventListener("click", resetFlow);
 talkAgainButton.addEventListener("click", () => {
   if (state.mediaRecorder?.state === "recording" && state.recordingContext === "response") {
@@ -1418,6 +1743,7 @@ window.addEventListener("pagehide", () => {
   stopTracks();
   stopSampleTracks();
   stopSpeech();
+  void stopTavusConversation();
   void stopLiveAvatarSession();
 });
 responseAudio.addEventListener("pause", () => {

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おたすけメッセージ</title>
-    <link rel="stylesheet" href="/styles.css?v=12">
+    <link rel="stylesheet" href="/styles.css?v=15">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -122,10 +122,55 @@
 
     <dialog id="adultDialog">
       <div class="dialog-header">
-        <div><p class="section-label">大人向け</p><h2>技術・安全情報</h2></div>
+        <div><p class="section-label">大人向け</p><h2>保護者素材と安全情報</h2></div>
         <button class="icon-button" id="closeDialog" type="button" aria-label="閉じる">×</button>
       </div>
       <p>これは本人同意済み素材を使ったAI生成デモです。本物の保護者とのリアルタイム通話ではありません。</p>
+      <section class="sampling-panel" aria-labelledby="samplingTitle">
+        <div class="sampling-heading">
+          <div>
+            <p class="section-label">サンプリング</p>
+            <h3 id="samplingTitle">保護者の写真と声</h3>
+          </div>
+          <span class="sample-badge" id="sampleBadge">未登録</span>
+        </div>
+        <label class="field-label" for="guardianLabel">子どもからの呼び方</label>
+        <input id="guardianLabel" class="text-input" type="text" maxlength="20" value="ママ" autocomplete="off">
+        <div class="sample-grid">
+          <label class="sample-picker" for="samplePhotoInput">
+            <span class="sample-icon" aria-hidden="true">写</span>
+            <strong>顔写真</strong>
+            <span id="samplePhotoLabel">写真を選ぶ</span>
+            <input id="samplePhotoInput" type="file" accept="image/jpeg,image/png,image/webp" capture="user">
+            <img id="samplePhotoPreview" alt="登録する保護者写真のプレビュー" hidden>
+          </label>
+          <div class="sample-picker voice-picker">
+            <span class="sample-icon" aria-hidden="true">声</span>
+            <strong>声のサンプル</strong>
+            <span id="sampleVoiceLabel">10秒まで録音</span>
+            <small class="sample-phrase">「お話ししてくれてありがとう。いつも応援しているよ。」</small>
+            <button class="secondary-button compact" id="sampleRecordButton" type="button">録音する</button>
+            <label class="file-link" for="sampleVoiceInput">音声を選ぶ</label>
+            <input id="sampleVoiceInput" type="file" accept="audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4">
+            <audio id="sampleVoicePreview" controls preload="metadata" hidden></audio>
+          </div>
+        </div>
+        <label class="check-row sample-consent">
+          <input id="faceConsentCheck" type="checkbox">
+          <span>顔写真をAIメッセージ作成に使うことに同意します</span>
+        </label>
+        <label class="check-row sample-consent">
+          <input id="voiceConsentCheck" type="checkbox">
+          <span>声をAIメッセージ作成に使うことに同意します</span>
+        </label>
+        <div class="action-row sample-actions">
+          <button class="primary-button" id="saveSampleButton" type="button">素材を登録</button>
+          <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
+        </div>
+        <p class="sample-note">登録素材はこのデモのメモリ内だけに保存され、サーバー再起動時に削除されます。</p>
+        <p id="samplingStatus" class="inline-status" role="status"></p>
+      </section>
+      <h3>素材利用の管理</h3>
       <div class="action-row">
         <button class="danger-button" id="revokeConsent" type="button">素材利用を停止</button>
         <button class="secondary-button" id="restoreConsent" type="button">デモ同意を再開</button>
@@ -136,6 +181,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=12"></script>
+    <script type="module" src="/app.js?v=15"></script>
   </body>
 </html>

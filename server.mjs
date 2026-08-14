@@ -4,6 +4,10 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import {
+  GuardianSamplingError,
+  createGuardianSamplingStore,
+} from "./lib/guardian-sampling.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
@@ -32,6 +36,8 @@ const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 2
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
+const guardianSampling = createGuardianSamplingStore();
+const guardianSamplingPhrase = "お話ししてくれてありがとう。いつも応援しているよ。";
 
 const demoConsent = {
   consentId: "demo-consent-001",
@@ -65,6 +71,17 @@ function sendJson(res, statusCode, value) {
   res.end(JSON.stringify(value));
 }
 
+function sendPrivateMedia(res, media) {
+  res.writeHead(200, {
+    "content-type": media.mimeType,
+    "content-length": media.bytes.length,
+    "cache-control": "private, no-store, max-age=0",
+    "cross-origin-resource-policy": "same-origin",
+    ...securityHeaders(),
+  });
+  res.end(media.bytes);
+}
+
 function securityHeaders() {
   return {
     "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
@@ -74,16 +91,57 @@ function securityHeaders() {
   };
 }
 
-async function readJson(req) {
+async function readJson(req, maximumBytes = 8 * 1024 * 1024) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 8 * 1024 * 1024) throw new Error("PAYLOAD_TOO_LARGE");
+    if (size > maximumBytes) throw new Error("PAYLOAD_TOO_LARGE");
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function samplingApiView(status = guardianSampling.status()) {
+  return {
+    configured: status.configured === true,
+    active: status.active === true,
+    subjectLabel: status.subjectLabel ?? null,
+    faceApproved: status.faceApproved === true,
+    voiceApproved: status.voiceApproved === true,
+    posterUrl: status.posterUrl ?? null,
+    voicePreviewUrl: status.voicePreviewUrl ?? null,
+    consentId: status.consentId ?? null,
+    avatarAssetId: status.avatarAssetId ?? null,
+  };
+}
+
+function customConsentView(status = guardianSampling.status()) {
+  return {
+    consentId: status.consentId,
+    avatarAssetId: status.avatarAssetId,
+    subjectLabel: status.subjectLabel,
+    faceApproved: status.faceApproved,
+    voiceApproved: status.voiceApproved,
+    active: status.active,
+    disclosure: status.disclosure,
+    posterUrl: status.posterUrl,
+    voicePreviewUrl: status.voicePreviewUrl,
+    source: "custom-sampling",
+  };
+}
+
+function samplingMutationAllowed(req) {
+  if (String(req.headers["sec-fetch-site"] ?? "").toLowerCase() === "cross-site") return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    const parsed = new URL(origin);
+    return ["http:", "https:"].includes(parsed.protocol) && parsed.host === req.headers.host;
+  } catch {
+    return false;
+  }
 }
 
 export function classifyTranscript(transcript) {
@@ -270,11 +328,13 @@ async function finishResponse(requestId, input, startedAt) {
     return;
   }
 
-  const consentOk = input.consentId === demoConsent.consentId
+  const registeredSample = guardianSampling.resolve(input.consentId, input.avatarAssetId);
+  const demoConsentOk = input.consentId === demoConsent.consentId
     && input.avatarAssetId === demoConsent.avatarAssetId
     && demoConsent.active
     && demoConsent.faceApproved
     && demoConsent.voiceApproved;
+  const consentOk = Boolean(registeredSample) || demoConsentOk;
 
   if (!consentOk) {
     const result = createAdultHandoff(
@@ -334,14 +394,25 @@ async function finishResponse(requestId, input, startedAt) {
 
   let responseBundle;
   try {
-    const defaultFault = routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
+    const defaultFault = registeredSample
+      ? "video_failure"
+      : routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
       ? "generated_video_failure"
       : "video_failure";
     responseBundle = await mediaProvider.generate({
       decision,
-      replyText: decision.replyText,
+      replyText: registeredSample ? guardianSamplingPhrase : decision.replyText,
       consentValid: true,
       faultMode: input.demoFault || defaultFault,
+      posterUrl: registeredSample?.photoUrl,
+      audioUrl: registeredSample?.voicePreviewUrl,
+      guardianSampling: registeredSample ? {
+        configured: true,
+        photoUsed: true,
+        voiceSampleRegistered: true,
+        voiceUsed: true,
+        voiceFallback: null,
+      } : null,
     });
   } catch (error) {
     if (error instanceof MediaProviderError && error.adultHandoff) {
@@ -365,7 +436,9 @@ async function finishResponse(requestId, input, startedAt) {
     safetyLevel: decision.safetyLevel,
     supportMode: decision.supportMode,
     emotion: decision.emotion,
-    replyText: responseBundle.parentLike ? decision.replyText : null,
+    replyText: responseBundle.parentLike
+      ? registeredSample ? guardianSamplingPhrase : decision.replyText
+      : null,
     responseBundle,
     bundle: responseBundle,
     completedAt: new Date().toISOString(),
@@ -385,6 +458,59 @@ async function finishResponse(requestId, input, startedAt) {
 
 async function apiHandler(req, res, url) {
   purgeExpiredData();
+  const samplingAssetMatch = url.pathname.match(/^\/api\/sampling\/assets\/(photo|voice)\/([^/]+)$/);
+  if (req.method === "GET" && samplingAssetMatch) {
+    let accessToken;
+    try {
+      accessToken = decodeURIComponent(samplingAssetMatch[2]);
+    } catch {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    const media = samplingAssetMatch[1] === "photo"
+      ? guardianSampling.readPhoto(accessToken)
+      : guardianSampling.readVoice(accessToken);
+    if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendPrivateMedia(res, media);
+    return true;
+  }
+  if (url.pathname === "/api/sampling") {
+    if (req.method === "GET") {
+      sendJson(res, 200, samplingApiView());
+      return true;
+    }
+    if (req.method === "POST") {
+      if (!samplingMutationAllowed(req)) {
+        sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+        return true;
+      }
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+        return true;
+      }
+      try {
+        const input = await readJson(req, 10 * 1024 * 1024);
+        sendJson(res, 201, samplingApiView(guardianSampling.register(input)));
+      } catch (error) {
+        const statusCode = error.message === "PAYLOAD_TOO_LARGE"
+          ? 413
+          : error instanceof GuardianSamplingError
+            ? error.statusCode
+            : 400;
+        sendJson(res, statusCode, { error: error.code || "SAMPLING_REQUEST_INVALID" });
+      }
+      return true;
+    }
+    if (req.method === "DELETE") {
+      if (!samplingMutationAllowed(req)) {
+        sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+        return true;
+      }
+      const result = guardianSampling.delete();
+      sendJson(res, 200, { ...samplingApiView(result), deleted: result.deleted });
+      return true;
+    }
+  }
   if (req.method === "GET" && url.pathname === "/api/health") {
     sendJson(res, 200, {
       status: "ok",
@@ -398,7 +524,10 @@ async function apiHandler(req, res, url) {
     return true;
   }
   if (req.method === "GET" && url.pathname === "/api/consent") {
-    sendJson(res, 200, demoConsent);
+    const samplingStatus = guardianSampling.status();
+    sendJson(res, 200, samplingStatus.configured && samplingStatus.active
+      ? customConsentView(samplingStatus)
+      : demoConsent);
     return true;
   }
   if (req.method === "POST" && url.pathname === "/api/consent") {
@@ -408,6 +537,7 @@ async function apiHandler(req, res, url) {
         sendJson(res, 400, { error: "CONSENT_ACTION_INVALID" });
         return true;
       }
+      if (input.action === "revoke") guardianSampling.revoke();
       demoConsent.active = input.action === "restore";
       sendJson(res, 200, demoConsent);
     } catch {

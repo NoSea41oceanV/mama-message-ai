@@ -5,6 +5,31 @@ import { buildReply, classifyTranscript, createAppServer, replyIsAllowed } from 
 let server;
 let baseUrl;
 
+const samplingPhoto = Buffer.concat([
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  Buffer.from("server-test-photo"),
+]);
+const samplingVoice = Buffer.concat([
+  Buffer.from("RIFF"),
+  Buffer.alloc(4),
+  Buffer.from("WAVEfmt "),
+  Buffer.from("server-test-voice"),
+]);
+
+function samplingRegistration(overrides = {}) {
+  return {
+    subjectLabel: "テストのおうちの人",
+    photoBase64: samplingPhoto.toString("base64"),
+    photoType: "image/png",
+    voiceBase64: samplingVoice.toString("base64"),
+    voiceType: "audio/wav",
+    voiceDurationSeconds: 8,
+    faceApproved: true,
+    voiceApproved: true,
+    ...overrides,
+  };
+}
+
 async function createAndWait(overrides = {}) {
   const input = {
     sessionId: `session-${crypto.randomUUID()}`,
@@ -245,6 +270,138 @@ test("technical logs do not expose child transcript or reply text", async () => 
   const body = await (await fetch(`${baseUrl}/api/logs`)).text();
   assert.doesNotMatch(body, /秘密の発話/);
   assert.doesNotMatch(body, /お話してくれてありがとう/);
+});
+
+test("guardian sampling API registers, previews, uses, and deletes private samples", async () => {
+  const createdResponse = await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(samplingRegistration()),
+  });
+  assert.equal(createdResponse.status, 201);
+  const created = await createdResponse.json();
+  assert.deepEqual(Object.keys(created).sort(), [
+    "active",
+    "avatarAssetId",
+    "configured",
+    "consentId",
+    "faceApproved",
+    "posterUrl",
+    "subjectLabel",
+    "voiceApproved",
+    "voicePreviewUrl",
+  ].sort());
+  assert.equal(created.configured, true);
+  assert.equal(created.active, true);
+  assert.equal(created.faceApproved, true);
+  assert.equal(created.voiceApproved, true);
+  assert.doesNotMatch(JSON.stringify(created), /server-test-(photo|voice)/);
+
+  const status = await (await fetch(`${baseUrl}/api/sampling`)).json();
+  assert.deepEqual(status, created);
+  const consent = await (await fetch(`${baseUrl}/api/consent`)).json();
+  assert.equal(consent.source, "custom-sampling");
+  assert.equal(consent.consentId, created.consentId);
+  assert.equal(consent.avatarAssetId, created.avatarAssetId);
+
+  const photoResponse = await fetch(`${baseUrl}${created.posterUrl}`);
+  assert.equal(photoResponse.status, 200);
+  assert.equal(photoResponse.headers.get("content-type"), "image/png");
+  assert.equal(photoResponse.headers.get("cache-control"), "private, no-store, max-age=0");
+  assert.deepEqual(Buffer.from(await photoResponse.arrayBuffer()), samplingPhoto);
+
+  const voiceResponse = await fetch(`${baseUrl}${created.voicePreviewUrl}`);
+  assert.equal(voiceResponse.status, 200);
+  assert.equal(voiceResponse.headers.get("content-type"), "audio/wav");
+  assert.deepEqual(Buffer.from(await voiceResponse.arrayBuffer()), samplingVoice);
+
+  const { result } = await createAndWait({
+    consentId: created.consentId,
+    avatarAssetId: created.avatarAssetId,
+  });
+  assert.equal(result.status, "READY");
+  assert.equal(result.responseBundle.fallbackLevel, 3);
+  assert.equal(result.responseBundle.posterUrl, created.posterUrl);
+  assert.equal(result.responseBundle.audioUrl, created.voicePreviewUrl);
+  assert.equal(result.responseBundle.subtitle, "お話ししてくれてありがとう。いつも応援しているよ。");
+  assert.equal(result.responseBundle.replyText, "お話ししてくれてありがとう。いつも応援しているよ。");
+  assert.equal(result.replyText, "お話ししてくれてありがとう。いつも応援しているよ。");
+  assert.equal(result.responseBundle.guardianSampling.photoUsed, true);
+  assert.equal(result.responseBundle.guardianSampling.voiceSampleRegistered, true);
+  assert.equal(result.responseBundle.guardianSampling.voiceUsed, true);
+
+  const { result: safetyResult } = await createAndWait({
+    confirmedTranscript: "知らない人がいて怖い、助けて",
+    consentId: created.consentId,
+    avatarAssetId: created.avatarAssetId,
+  });
+  assert.equal(safetyResult.status, "ADULT_HANDOFF");
+  assert.equal(safetyResult.responseBundle, null);
+  assert.equal(JSON.stringify(safetyResult).includes(created.posterUrl), false);
+  assert.equal(JSON.stringify(safetyResult).includes(created.voicePreviewUrl), false);
+
+  const deletedResponse = await fetch(`${baseUrl}/api/sampling`, { method: "DELETE" });
+  assert.equal(deletedResponse.status, 200);
+  const deleted = await deletedResponse.json();
+  assert.equal(deleted.deleted, true);
+  assert.equal(deleted.configured, false);
+  assert.equal((await fetch(`${baseUrl}${created.posterUrl}`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}${created.voicePreviewUrl}`)).status, 404);
+  assert.equal((await (await fetch(`${baseUrl}/api/consent`)).json()).consentId, "demo-consent-001");
+});
+
+test("sampling API rejects missing consent, MIME spoofing, and cross-site mutation", async () => {
+  const missingConsent = await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(samplingRegistration({ voiceApproved: false })),
+  });
+  assert.equal(missingConsent.status, 422);
+  assert.equal((await missingConsent.json()).error, "EXPLICIT_CONSENT_REQUIRED");
+
+  const spoofed = await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(samplingRegistration({ photoBase64: samplingVoice.toString("base64") })),
+  });
+  assert.equal(spoofed.status, 400);
+  assert.equal((await spoofed.json()).error, "PHOTO_CONTENT_INVALID");
+
+  const crossSite = await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://attacker.example",
+    },
+    body: JSON.stringify(samplingRegistration()),
+  });
+  assert.equal(crossSite.status, 403);
+  assert.equal((await crossSite.json()).error, "CROSS_SITE_REQUEST_FORBIDDEN");
+});
+
+test("revoking consent erases an active custom sample", async () => {
+  const created = await (await fetch(`${baseUrl}/api/sampling`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(samplingRegistration()),
+  })).json();
+
+  const revoke = await fetch(`${baseUrl}/api/consent`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "revoke" }),
+  });
+  assert.equal(revoke.status, 200);
+  assert.equal((await revoke.json()).active, false);
+  assert.equal((await (await fetch(`${baseUrl}/api/sampling`)).json()).configured, false);
+  assert.equal((await fetch(`${baseUrl}${created.posterUrl}`)).status, 404);
+  assert.equal((await fetch(`${baseUrl}${created.voicePreviewUrl}`)).status, 404);
+
+  await fetch(`${baseUrl}/api/consent`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "restore" }),
+  });
 });
 
 test("guardian can revoke and restore demo asset consent", async () => {

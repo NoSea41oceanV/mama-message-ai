@@ -39,6 +39,20 @@ const connectionStatus = document.querySelector("#connectionStatus");
 const revokeConsent = document.querySelector("#revokeConsent");
 const restoreConsent = document.querySelector("#restoreConsent");
 const consentAdminStatus = document.querySelector("#consentAdminStatus");
+const guardianLabel = document.querySelector("#guardianLabel");
+const sampleBadge = document.querySelector("#sampleBadge");
+const samplePhotoInput = document.querySelector("#samplePhotoInput");
+const samplePhotoPreview = document.querySelector("#samplePhotoPreview");
+const samplePhotoLabel = document.querySelector("#samplePhotoLabel");
+const sampleVoiceInput = document.querySelector("#sampleVoiceInput");
+const sampleVoicePreview = document.querySelector("#sampleVoicePreview");
+const sampleVoiceLabel = document.querySelector("#sampleVoiceLabel");
+const sampleRecordButton = document.querySelector("#sampleRecordButton");
+const faceConsentCheck = document.querySelector("#faceConsentCheck");
+const voiceConsentCheck = document.querySelector("#voiceConsentCheck");
+const saveSampleButton = document.querySelector("#saveSampleButton");
+const deleteSampleButton = document.querySelector("#deleteSampleButton");
+const samplingStatus = document.querySelector("#samplingStatus");
 
 const state = {
   screen: "setup",
@@ -54,6 +68,16 @@ const state = {
   requestId: null,
   response: null,
   pollAbort: null,
+  sample: null,
+  samplePhoto: null,
+  sampleVoiceBlob: null,
+  sampleVoiceRecorder: null,
+  sampleVoiceStream: null,
+  sampleVoiceChunks: [],
+  sampleVoiceDurationSeconds: null,
+  sampleRecordStartedAt: 0,
+  sampleRecordTimer: null,
+  sampleAutoStopTimer: null,
 };
 
 for (let index = 0; index < 27; index += 1) {
@@ -95,6 +119,229 @@ function blobToBase64(blob) {
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function prepareSamplePhoto(file) {
+  if (!file || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+    throw new Error("JPEG・PNG・WebPの写真を選んでください");
+  }
+  if (file.size > 12 * 1024 * 1024) throw new Error("写真は12MB以下を選んでください");
+  const source = await fileToDataUrl(file);
+  const image = new Image();
+  image.src = source;
+  await image.decode();
+  const scale = Math.min(1, 720 / Math.max(image.naturalWidth, image.naturalHeight));
+  const width = Math.max(1, Math.round(image.naturalWidth * scale));
+  const height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.86));
+  if (!blob || blob.size > 2 * 1024 * 1024) throw new Error("写真を小さくできませんでした");
+  return { base64: await blobToBase64(blob), type: blob.type, previewUrl: URL.createObjectURL(blob) };
+}
+
+function stopSampleTracks() {
+  state.sampleVoiceStream?.getTracks().forEach((track) => track.stop());
+  state.sampleVoiceStream = null;
+  clearInterval(state.sampleRecordTimer);
+  clearTimeout(state.sampleAutoStopTimer);
+}
+
+function readAudioDuration(url) {
+  return new Promise((resolve, reject) => {
+    const audio = new Audio();
+    const timer = setTimeout(() => reject(new Error("音声の長さを確認できませんでした")), 5000);
+    audio.addEventListener("loadedmetadata", () => {
+      clearTimeout(timer);
+      resolve(audio.duration);
+    }, { once: true });
+    audio.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("音声ファイルを読み込めませんでした"));
+    }, { once: true });
+    audio.src = url;
+  });
+}
+
+async function setSampleVoice(blob, knownDurationSeconds = null) {
+  if (!blob || blob.size > 2 * 1024 * 1024) throw new Error("声のサンプルは2MB以下にしてください");
+  const previewUrl = URL.createObjectURL(blob);
+  const durationSeconds = Number.isFinite(knownDurationSeconds)
+    ? knownDurationSeconds
+    : await readAudioDuration(previewUrl);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 10.2) {
+    URL.revokeObjectURL(previewUrl);
+    throw new Error("声のサンプルは10秒以内にしてください");
+  }
+  state.sampleVoiceBlob = blob;
+  state.sampleVoiceDurationSeconds = durationSeconds;
+  sampleVoicePreview.src = previewUrl;
+  sampleVoicePreview.hidden = false;
+  sampleVoiceLabel.textContent = `${Math.max(1, Math.round(blob.size / 1024))}KB・準備できました`;
+}
+
+async function stopSampleRecording() {
+  if (!state.sampleVoiceRecorder || state.sampleVoiceRecorder.state === "inactive") return;
+  state.sampleVoiceRecorder.stop();
+  stopSampleTracks();
+  sampleRecordButton.textContent = "録音する";
+}
+
+async function startSampleRecording() {
+  samplingStatus.textContent = "";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    state.sampleVoiceStream = stream;
+    state.sampleVoiceChunks = [];
+    state.sampleVoiceRecorder = new MediaRecorder(stream);
+    state.sampleVoiceRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data.size) state.sampleVoiceChunks.push(event.data);
+    });
+    state.sampleVoiceRecorder.addEventListener("stop", async () => {
+      try {
+        const blob = new Blob(state.sampleVoiceChunks, { type: state.sampleVoiceRecorder.mimeType || "audio/webm" });
+        const durationSeconds = Math.min(10, (Date.now() - state.sampleRecordStartedAt) / 1000);
+        await setSampleVoice(blob, durationSeconds);
+      } catch (error) {
+        samplingStatus.textContent = error.message;
+      }
+    }, { once: true });
+    state.sampleVoiceRecorder.start(250);
+    state.sampleRecordStartedAt = Date.now();
+    sampleRecordButton.textContent = "録音を止める";
+    sampleVoiceLabel.textContent = "録音中 0秒";
+    state.sampleRecordTimer = setInterval(() => {
+      const seconds = Math.min(10, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
+      sampleVoiceLabel.textContent = `録音中 ${seconds}秒`;
+    }, 250);
+    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, 10000);
+  } catch {
+    samplingStatus.textContent = "マイクを使えませんでした。音声ファイルを選んでください。";
+  }
+}
+
+function renderSampling(sample) {
+  state.sample = sample;
+  const configured = Boolean(sample?.configured);
+  sampleBadge.textContent = configured ? (sample.active ? "登録済み" : "停止中") : "未登録";
+  sampleBadge.classList.toggle("is-ready", configured && sample.active);
+  guardianLabel.value = sample?.subjectLabel || guardianLabel.value || "ママ";
+  deleteSampleButton.disabled = !configured;
+  if (sample?.posterUrl && !state.samplePhoto) {
+    samplePhotoPreview.src = sample.posterUrl;
+    samplePhotoPreview.hidden = false;
+    samplePhotoLabel.textContent = "登録済み";
+  } else if (!state.samplePhoto) {
+    samplePhotoPreview.hidden = true;
+    samplePhotoLabel.textContent = "写真を選ぶ";
+  }
+  if (sample?.voicePreviewUrl && !state.sampleVoiceBlob) {
+    sampleVoicePreview.src = sample.voicePreviewUrl;
+    sampleVoicePreview.hidden = false;
+    sampleVoiceLabel.textContent = "登録済み・再生できます";
+  } else if (!state.sampleVoiceBlob) {
+    sampleVoicePreview.hidden = true;
+    sampleVoiceLabel.textContent = "10秒まで録音";
+  }
+  faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
+  voiceConsentCheck.checked = Boolean(sample?.voiceApproved && configured);
+}
+
+async function loadSampling() {
+  const response = await fetch("/api/sampling");
+  if (!response.ok) throw new Error("登録状態を確認できませんでした");
+  const sample = await response.json();
+  renderSampling(sample);
+  return sample;
+}
+
+async function refreshConsent() {
+  const response = await fetch("/api/consent");
+  if (!response.ok) throw new Error("同意情報を確認できませんでした");
+  applyConsent(await response.json());
+}
+
+async function saveSampling() {
+  samplingStatus.textContent = "";
+  if (!state.samplePhoto || !state.sampleVoiceBlob) {
+    samplingStatus.textContent = "顔写真と声のサンプルを両方用意してください。";
+    return;
+  }
+  if (!faceConsentCheck.checked || !voiceConsentCheck.checked) {
+    samplingStatus.textContent = "顔写真と声、それぞれの利用同意を確認してください。";
+    return;
+  }
+  const subjectLabel = guardianLabel.value.trim();
+  if (!subjectLabel) {
+    guardianLabel.focus();
+    return;
+  }
+  saveSampleButton.disabled = true;
+  samplingStatus.textContent = "素材を登録しています";
+  try {
+    const response = await fetch("/api/sampling", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        subjectLabel,
+        photoBase64: state.samplePhoto.base64,
+        photoType: state.samplePhoto.type,
+        voiceBase64: await blobToBase64(state.sampleVoiceBlob),
+        voiceType: state.sampleVoiceBlob.type,
+        voiceDurationSeconds: state.sampleVoiceDurationSeconds,
+        faceApproved: true,
+        voiceApproved: true,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "素材を登録できませんでした");
+    state.samplePhoto = null;
+    state.sampleVoiceBlob = null;
+    state.sampleVoiceDurationSeconds = null;
+    renderSampling(data);
+    await refreshConsent();
+    samplingStatus.textContent = "登録しました。次の返答からこの写真を使います。";
+  } catch (error) {
+    samplingStatus.textContent = error.message;
+  } finally {
+    saveSampleButton.disabled = false;
+  }
+}
+
+async function deleteSampling() {
+  if (!window.confirm("登録した顔写真と声を削除します。よろしいですか？")) return;
+  deleteSampleButton.disabled = true;
+  samplingStatus.textContent = "登録素材を削除しています";
+  try {
+    const response = await fetch("/api/sampling", { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || "登録素材を削除できませんでした");
+    state.samplePhoto = null;
+    state.sampleVoiceBlob = null;
+    state.sampleVoiceDurationSeconds = null;
+    samplePhotoInput.value = "";
+    sampleVoiceInput.value = "";
+    renderSampling(data);
+    await refreshConsent();
+    samplingStatus.textContent = "登録素材を削除しました。デモ素材に戻りました。";
+  } catch (error) {
+    samplingStatus.textContent = error.message;
+    deleteSampleButton.disabled = !state.sample?.configured;
+  }
 }
 
 async function transcribe({ blob = null, useDemo = false } = {}) {
@@ -385,7 +632,7 @@ function continueTalking() {
 function applyConsent(consent) {
   state.consent = consent.active ? consent : null;
   consentDisclosure.textContent = consent.active
-    ? `${consent.subjectLabel} / 本人同意済み素材（デモ）`
+    ? `${consent.subjectLabel} / ${consent.disclosure || "本人同意済み素材"}`
     : "素材利用は停止されています。大人向け画面で確認してください。";
   consentAdminStatus.textContent = consent.active ? "素材利用: 有効" : "素材利用: 停止中";
   consentCheck.checked = consent.active ? consentCheck.checked : false;
@@ -403,9 +650,44 @@ async function updateConsent(action) {
   });
   if (!response.ok) throw new Error("同意状態を更新できませんでした");
   applyConsent(await response.json());
+  await loadSampling();
+  samplingStatus.textContent = action === "revoke"
+    ? "素材利用を停止し、登録した写真と声を破棄しました。"
+    : "デモ素材の利用を再開しました。";
 }
 
 consentCheck.addEventListener("change", () => { startSetup.disabled = !consentCheck.checked || !state.consent; });
+samplePhotoInput.addEventListener("change", async () => {
+  samplingStatus.textContent = "";
+  try {
+    state.samplePhoto = await prepareSamplePhoto(samplePhotoInput.files?.[0]);
+    samplePhotoPreview.src = state.samplePhoto.previewUrl;
+    samplePhotoPreview.hidden = false;
+    samplePhotoLabel.textContent = "準備できました";
+  } catch (error) {
+    state.samplePhoto = null;
+    samplePhotoInput.value = "";
+    samplingStatus.textContent = error.message;
+  }
+});
+sampleVoiceInput.addEventListener("change", async () => {
+  samplingStatus.textContent = "";
+  try {
+    const file = sampleVoiceInput.files?.[0];
+    if (!file || !file.type.startsWith("audio/")) throw new Error("音声ファイルを選んでください");
+    await setSampleVoice(file);
+  } catch (error) {
+    state.sampleVoiceBlob = null;
+    sampleVoiceInput.value = "";
+    samplingStatus.textContent = error.message;
+  }
+});
+sampleRecordButton.addEventListener("click", () => {
+  if (state.sampleVoiceRecorder?.state === "recording") stopSampleRecording();
+  else startSampleRecording();
+});
+saveSampleButton.addEventListener("click", saveSampling);
+deleteSampleButton.addEventListener("click", deleteSampling);
 startSetup.addEventListener("click", () => showScreen("record"));
 recordButton.addEventListener("click", () => state.mediaRecorder?.state === "recording" ? stopRecording() : startRecording());
 demoAudioButton.addEventListener("click", () => transcribe({ useDemo: true }));
@@ -416,9 +698,9 @@ replayButton.addEventListener("click", playResponse);
 soundButton.addEventListener("click", stopSpeech);
 finishButton.addEventListener("click", resetFlow);
 talkAgainButton.addEventListener("click", continueTalking);
-adultConfirmButton.addEventListener("click", async () => { await loadLogs(); adultDialog.showModal(); });
-adultButton.addEventListener("click", async () => { await loadLogs(); adultDialog.showModal(); });
-closeDialog.addEventListener("click", () => adultDialog.close());
+adultConfirmButton.addEventListener("click", async () => { await Promise.allSettled([loadLogs(), loadSampling()]); adultDialog.showModal(); });
+adultButton.addEventListener("click", async () => { await Promise.allSettled([loadLogs(), loadSampling()]); adultDialog.showModal(); });
+closeDialog.addEventListener("click", () => { stopSampleRecording(); adultDialog.close(); });
 revokeConsent.addEventListener("click", () => updateConsent("revoke").catch((error) => { consentAdminStatus.textContent = error.message; }));
 restoreConsent.addEventListener("click", () => updateConsent("restore").catch((error) => { consentAdminStatus.textContent = error.message; }));
 backButton.addEventListener("click", () => {
@@ -427,11 +709,10 @@ backButton.addEventListener("click", () => {
   else if (state.screen === "transcript") showScreen("record");
   else resetFlow();
 });
-window.addEventListener("pagehide", () => { stopTracks(); stopSpeech(); });
+window.addEventListener("pagehide", () => { stopTracks(); stopSampleTracks(); stopSpeech(); });
 
-fetch("/api/consent")
-  .then((response) => response.json())
-  .then((consent) => {
+Promise.all([fetch("/api/consent").then((response) => response.json()), loadSampling()])
+  .then(([consent]) => {
     applyConsent(consent);
     connectionStatus.textContent = "じゅんびできたよ";
   })

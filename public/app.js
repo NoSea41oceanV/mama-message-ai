@@ -314,6 +314,9 @@ function videoStatusLabel(status) {
 
 function friendlyVideoFailureMessage(message) {
   const detail = String(message ?? "");
+  if (detail.includes("insufficient_user_quota")) {
+    return "OrcaRouterの通常ウォレット残高が不足しています。請求画面で1回限りのクレジットを追加してから、もう一度お試しください。";
+  }
   if (detail.includes("HTTP 403")) {
     return "OrcaRouterでKling動画が拒否されました。ワークスペース残高と、プロモーションクレジットの動画利用可否を確認してください。";
   }

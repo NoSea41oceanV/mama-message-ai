@@ -101,6 +101,24 @@ test("Kling exposes typed provider failures without response bodies", async () =
   );
 });
 
+test("Kling captures OrcaRouter top-level quota error codes", async () => {
+  const provider = createKlingVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "kling", ORCAROUTER_API_KEY: "test-secret" },
+    fetchImpl: async () => new Response(JSON.stringify({
+      code: "insufficient_user_quota",
+      message: "sensitive billing details",
+      data: null,
+    }), { status: 403, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    provider.getTask("task-1"),
+    (error) => error instanceof KlingVideoProviderError
+      && error.status === 403
+      && error.providerCode === "insufficient_user_quota"
+      && !error.message.includes("sensitive billing details"),
+  );
+});
+
 test("OrcaRouter uses injected local functions without an API key", async () => {
   let fetchCalls = 0;
   const provider = createOrcaRouterProvider({

@@ -353,10 +353,20 @@ textarea { padding: 16px; font-size: 20px; font-weight: 700; line-height: 1.7; r
   box-shadow: 0 9px 0 var(--sun-deep), 0 16px 28px rgb(8 47 85 / 16%);
 }
 .media-stage img, .media-stage video { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--sky-soft); }
+.guardian-portrait { position: relative; width: 100%; height: 100%; overflow: hidden; transform-origin: 50% 72%; }
+.guardian-portrait > img { position: absolute; inset: 0; }
+.guardian-mouth {
+  clip-path: inset(55% 0 0);
+  pointer-events: none;
+  transform: translateY(var(--mouth-shift, 0)) scaleY(var(--mouth-scale, 1));
+  transform-origin: 50% 68%;
+  will-change: transform;
+}
 .neutral-media { display: grid; place-items: center; width: 100%; height: 100%; background: var(--mint-soft); }
 .neutral-media span { display: grid; place-items: center; width: 86px; height: 86px; border: 5px solid #208a77; border-radius: 50%; color: #208a77; font-size: 42px; font-weight: 900; }
 .media-stage.is-neutral { border-color: var(--mint); background: var(--mint-soft); box-shadow: 0 9px 0 #37a38f; }
-.media-stage.is-speaking img { animation: portrait-breathe 1.5s ease-in-out infinite alternate; }
+.media-stage.is-portrait-animated .guardian-portrait { animation: portrait-nod 1.65s ease-in-out infinite alternate; }
+.media-stage.is-audio-fallback .guardian-mouth { animation: mouth-fallback .32s steps(2, end) infinite alternate; }
 .subtitle {
   position: absolute;
   right: 12px;
@@ -451,7 +461,8 @@ dialog .secondary-button { box-shadow: none; }
 @keyframes trail { 50% { transform: translate(10px, -8px) scale(.7); opacity: .45; } }
 @keyframes confetti { 50% { transform: translateY(10px) rotate(22deg); } }
 @keyframes mic-pulse { 50% { transform: scale(1.035); } }
-@keyframes portrait-breathe { to { transform: scale(1.015); } }
+@keyframes portrait-nod { to { transform: translateY(2px) rotate(.35deg) scale(1.018); } }
+@keyframes mouth-fallback { to { transform: translateY(3px) scaleY(1.07); } }
 
 @media (min-width: 760px) {
   body { padding: 24px; }

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おたすけメッセージ</title>
-    <link rel="stylesheet" href="/styles.css?v=16">
+    <link rel="stylesheet" href="/styles.css?v=17">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -90,7 +90,10 @@
         <div class="media-stage" id="mediaStage">
           <video id="responseVideo" playsinline preload="metadata" hidden></video>
           <audio id="responseAudio" preload="auto" hidden></audio>
-          <img id="responsePoster" alt="保護者のメッセージ画像">
+          <div class="guardian-portrait" id="guardianPortrait" hidden>
+            <img id="responsePoster" alt="保護者のメッセージ画像">
+            <img class="guardian-mouth" id="responseMouth" alt="" aria-hidden="true">
+          </div>
           <div class="neutral-media" id="neutralMedia" hidden aria-hidden="true"><span>!</span></div>
           <div class="voice-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
           <p class="subtitle" id="subtitle"></p>
@@ -181,6 +184,6 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=16"></script>
+    <script type="module" src="/app.js?v=17"></script>
   </body>
 </html>

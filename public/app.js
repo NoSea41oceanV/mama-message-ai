@@ -21,7 +21,9 @@ const cancelButton = document.querySelector("#cancelButton");
 const responseTitle = document.querySelector("#responseTitle");
 const responseVideo = document.querySelector("#responseVideo");
 const responseAudio = document.querySelector("#responseAudio");
+const guardianPortrait = document.querySelector("#guardianPortrait");
 const responsePoster = document.querySelector("#responsePoster");
+const responseMouth = document.querySelector("#responseMouth");
 const neutralMedia = document.querySelector("#neutralMedia");
 const mediaStage = document.querySelector("#mediaStage");
 const subtitle = document.querySelector("#subtitle");
@@ -103,6 +105,10 @@ const state = {
   sampleRecordStartedAt: 0,
   sampleRecordTimer: null,
   sampleAutoStopTimer: null,
+  responseAudioContext: null,
+  responseAudioSource: null,
+  responseAnalyser: null,
+  portraitAnimationFrame: null,
 };
 
 for (let index = 0; index < 27; index += 1) {
@@ -111,6 +117,7 @@ for (let index = 0; index < 27; index += 1) {
 }
 
 function showScreen(name) {
+  if (state.screen === "response" && name !== "response") stopSpeech();
   state.screen = name;
   screens.forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === name));
   backButton.disabled = ["setup", "waiting"].includes(name);
@@ -517,6 +524,7 @@ function waitForMedia(element, timeoutMs = 5000) {
 }
 
 async function prepareResponse(data) {
+  stopPortraitAnimation();
   const bundle = data.responseBundle;
   const responseScreen = document.querySelector('[data-screen="response"]');
   responseScreen.dataset.supportMode = data.supportMode ?? data.routerDecision?.supportMode ?? "listen";
@@ -524,7 +532,8 @@ async function prepareResponse(data) {
   subtitle.textContent = bundle.subtitle;
   responseTitle.textContent = bundle.parentLike === false ? "いっしょに確認しよう" : "おへんじがとどいたよ";
   responsePoster.src = bundle.posterUrl ?? "";
-  responsePoster.hidden = Boolean(bundle.videoUrl) || !bundle.posterUrl;
+  responseMouth.src = bundle.posterUrl ?? "";
+  guardianPortrait.hidden = Boolean(bundle.videoUrl) || !bundle.posterUrl;
   responseVideo.hidden = !bundle.videoUrl;
   neutralMedia.hidden = Boolean(bundle.videoUrl || bundle.posterUrl);
   mediaStage.classList.toggle("is-neutral", !bundle.videoUrl && !bundle.posterUrl);
@@ -547,10 +556,68 @@ async function prepareResponse(data) {
   }
 }
 
+function isSampledStillAudio(bundle = state.response?.responseBundle) {
+  return Boolean(
+    bundle?.guardianSampling?.configured
+    && bundle.parentLike
+    && bundle.posterUrl
+    && bundle.audioUrl
+    && !bundle.videoUrl
+  );
+}
+
+function stopPortraitAnimation() {
+  if (state.portraitAnimationFrame) cancelAnimationFrame(state.portraitAnimationFrame);
+  state.portraitAnimationFrame = null;
+  mediaStage.classList.remove("is-portrait-animated", "is-audio-fallback");
+  mediaStage.style.removeProperty("--mouth-shift");
+  mediaStage.style.removeProperty("--mouth-scale");
+}
+
+async function startPortraitAnimation() {
+  stopPortraitAnimation();
+  if (!isSampledStillAudio() || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  mediaStage.classList.add("is-portrait-animated", "is-audio-fallback");
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    state.responseAudioContext ||= new AudioContextClass();
+    state.responseAnalyser ||= state.responseAudioContext.createAnalyser();
+    state.responseAnalyser.fftSize = 256;
+    state.responseAnalyser.smoothingTimeConstant = 0.72;
+    if (!state.responseAudioSource) {
+      state.responseAudioSource = state.responseAudioContext.createMediaElementSource(responseAudio);
+      state.responseAudioSource.connect(state.responseAnalyser);
+      state.responseAnalyser.connect(state.responseAudioContext.destination);
+    }
+    await state.responseAudioContext.resume();
+    const samples = new Uint8Array(state.responseAnalyser.frequencyBinCount);
+    mediaStage.classList.remove("is-audio-fallback");
+    const updateMouth = () => {
+      if (responseAudio.paused || responseAudio.ended || !isSampledStillAudio()) {
+        stopPortraitAnimation();
+        return;
+      }
+      state.responseAnalyser.getByteFrequencyData(samples);
+      const speechBins = samples.subarray(1, Math.min(42, samples.length));
+      const average = speechBins.reduce((sum, value) => sum + value, 0) / speechBins.length;
+      const energy = Math.max(0, Math.min(1, (average - 14) / 92));
+      mediaStage.style.setProperty("--mouth-shift", `${(energy * 4.5).toFixed(2)}px`);
+      mediaStage.style.setProperty("--mouth-scale", (1 + energy * .11).toFixed(3));
+      state.portraitAnimationFrame = requestAnimationFrame(updateMouth);
+    };
+    updateMouth();
+  } catch {
+    // The deterministic CSS animation remains active when Web Audio is unavailable.
+  }
+}
+
 function stopSpeech() {
   speechSynthesis.cancel();
   responseVideo.pause();
   responseAudio.pause();
+  stopPortraitAnimation();
   mediaStage.classList.remove("is-speaking");
 }
 
@@ -571,9 +638,13 @@ async function playResponse() {
   }
   if (bundle.audioUrl) {
     responseAudio.currentTime = 0;
-    responseAudio.addEventListener("ended", () => mediaStage.classList.remove("is-speaking"), { once: true });
-    responseAudio.addEventListener("error", () => mediaStage.classList.remove("is-speaking"), { once: true });
-    await responseAudio.play();
+    try {
+      await responseAudio.play();
+      await startPortraitAnimation();
+    } catch {
+      stopPortraitAnimation();
+      mediaStage.classList.remove("is-speaking");
+    }
     return;
   }
   if (!bundle.speechSynthesis) {
@@ -735,6 +806,15 @@ backButton.addEventListener("click", () => {
   else resetFlow();
 });
 window.addEventListener("pagehide", () => { stopTracks(); stopSampleTracks(); stopSpeech(); });
+responseAudio.addEventListener("pause", stopPortraitAnimation);
+responseAudio.addEventListener("ended", () => {
+  stopPortraitAnimation();
+  mediaStage.classList.remove("is-speaking");
+});
+responseAudio.addEventListener("error", () => {
+  stopPortraitAnimation();
+  mediaStage.classList.remove("is-speaking");
+});
 
 Promise.all([profileFetch("/api/consent").then((response) => response.json()), loadSampling()])
   .then(([consent]) => {

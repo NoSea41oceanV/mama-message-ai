@@ -29,23 +29,14 @@ docs/submission/video/*
 *-renders/
 pptx-renders*/
 
-# Existing research/reference artifacts are not part of the source submission
+# Local research and generated deliverables are shared outside the source repo.
 参考/
-成果物/PDF/*
-!成果物/PDF/共有用/
-成果物/PDF/共有用/*
-!成果物/PDF/共有用/AI_HACK_フロントエンド要件レビュー_スマホ版.pdf
-!成果物/PDF/共有用/AI_HACK_AIビデオメッセージ詳細要件_スマホ版.pdf
-!成果物/PDF/共有用/AI_HACK_技術要件レビュー_スマホ版.pdf
-成果物/PowerPoint/old/
-成果物/PowerPoint/最新版/
-成果物/PowerPoint/調査/
-成果物/PowerPoint/共有用/*
-!成果物/PowerPoint/共有用/AI_HACK_3人チーム開発進行ガイド.pptx
-!成果物/PowerPoint/共有用/AI_HACK_AIビデオメッセージ要件定義サマリー.pptx
-!成果物/PowerPoint/共有用/AI_HACK_フロントエンド要件レビュー_スマホ版.pptx
-!成果物/PowerPoint/共有用/AI_HACK_AIビデオメッセージ詳細要件_スマホ版.pptx
-!成果物/PowerPoint/共有用/AI_HACK_技術要件レビュー_スマホ版.pptx
+成果物/
+docs/architecture/
+docs/current-state/
+docs/submission/screenshots/
+scripts/build-current-state-docs.py
+AI_HACK_プロジェクトテンプレート.md
 
 # OS and editor files
 .DS_Store

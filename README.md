@@ -14,6 +14,7 @@
 
 ## チーム共通資料
 
+- [資料一覧](docs/README.md)
 - [要件定義](docs/hackathon-build/prd.md)
 - [開発チェックリスト](docs/hackathon-build/checklist.md)
 - [3人チーム開発進行ガイド](docs/team/TEAM_WORKFLOW.md)
@@ -76,7 +77,6 @@ APIキーや保護者素材はコミットしません。実値は各自の `.en
 - [3分デモ台本](docs/submission/DEMO_SCRIPT_3MIN.md)
 - [生成済み3分デモ動画の情報](docs/submission/video/README.md)
 - [最終レビューチェックリスト](docs/submission/FINAL_REVIEW_CHECKLIST.md)
-- [確認用スクリーンショット](docs/submission/screenshots/)
 
 ## 起動
 

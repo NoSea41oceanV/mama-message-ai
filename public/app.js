@@ -1133,10 +1133,12 @@ async function startTavusConversation() {
       throw new Error(code);
     }
 
+    const embeddedCallMachineUrl = globalThis.MamaDailyRuntime?.createBundleUrl?.();
     const call = Daily.createCallObject({
       audioSource: false,
       videoSource: false,
       subscribeToTracksAutomatically: true,
+      ...(embeddedCallMachineUrl ? { callObjectBundleUrlOverride: embeddedCallMachineUrl } : {}),
     });
     const mediaStream = new MediaStream();
     state.tavusCall = call;
@@ -1169,7 +1171,9 @@ async function startTavusConversation() {
       }
     });
     call.on("error", (event) => {
-      console.warn("Tavus Daily error", safeTavusDailyError(event));
+      const safeDetail = safeTavusDailyError(event);
+      responseRecordError.dataset.tavusDetail = safeDetail;
+      console.warn("Tavus Daily error", safeDetail);
       rejectDailyError(new Error("TAVUS_DAILY_ERROR"));
     });
     call.on("left-meeting", () => {
@@ -1241,6 +1245,7 @@ async function playTavus(bundle) {
   if (!tavusCanPlay()) return false;
   try {
     delete responseRecordError.dataset.tavusError;
+    delete responseRecordError.dataset.tavusDetail;
     responseTalkLead.textContent = "りあるたいむどうがを じゅんびしているよ";
     const [call, pcm] = await Promise.all([
       startTavusConversation(),

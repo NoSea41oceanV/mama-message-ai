@@ -188,7 +188,7 @@ function storeGeneratedReplyVideo(media) {
 
 function securityHeaders() {
   return {
-    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://api.liveavatar.com wss://api.liveavatar.com wss://webrtc-signaling.heygen.io wss://*.livekit.cloud https://*.livekit.cloud https://*.daily.co wss://*.daily.co; frame-src https://*.daily.co; worker-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://api.liveavatar.com wss://api.liveavatar.com wss://webrtc-signaling.heygen.io wss://*.livekit.cloud https://*.livekit.cloud https://*.daily.co wss://*.daily.co; frame-src https://*.daily.co; worker-src 'self' blob:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     "permissions-policy": "camera=(), geolocation=(), payment=(), usb=()",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",

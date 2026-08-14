@@ -171,6 +171,51 @@ test("guardian video service marks a reusable avatar ready without requiring a p
   }
 });
 
+test("guardian video service resumes a long-running Tavus Face after the legacy timeout", () => {
+  const root = mkdtempSync(join(tmpdir(), "guardian-tavus-resume-"));
+  try {
+    const store = createPersistentGuardianSamplingStore({
+      directory: join(root, "samples"),
+      encryptionKey: Buffer.alloc(32, 6),
+    });
+    store.register(profileId, registration());
+    const createdAt = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const queued = store.createVideoJob(profileId, {
+      jobId: "video-tavus-face",
+      provider: "tavus",
+      createdAt,
+    });
+    store.updateVideoJob(profileId, queued.jobId, {
+      status: "processing",
+      providerTaskId: "face-training",
+    });
+    store.updateVideoJob(profileId, queued.jobId, {
+      status: "failed",
+      message: "Video generation timed out. You can try again.",
+    });
+    const scheduled = [];
+    const service = createGuardianVideoService({
+      samplingStore: store,
+      provider: {
+        name: "tavus",
+        taskPollTimeoutMs: 5 * 60 * 60 * 1000,
+        recoverTimedOutTasks: true,
+      },
+      schedule: (action) => scheduled.push(action),
+    });
+
+    assert.deepEqual(service.profileStatus(profileId), {
+      status: "processing",
+      jobId: queued.jobId,
+      message: "Video generation is processing.",
+    });
+    assert.equal(scheduled.length, 1);
+    assert.equal(store.videoJob(profileId, queued.jobId).providerTaskId, "face-training");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("generated video download enforces HTTPS, type, and byte cap", async () => {
   await assert.rejects(
     downloadGeneratedVideo("http://signed.example/video.mp4"),

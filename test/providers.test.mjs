@@ -696,6 +696,8 @@ test("Tavus creates a private Echo conversation without exposing its API key", a
   const result = await provider.createConversation();
   assert.equal(provider.streamingAvailable, true);
   assert.equal(provider.available, false);
+  assert.equal(provider.taskPollTimeoutMs, 5 * 60 * 60 * 1000);
+  assert.equal(provider.recoverTimedOutTasks, true);
   assert.equal(request.url, "https://api.tavus.test/v2/conversations");
   assert.equal(request.init.headers["x-api-key"], "tavus-secret");
   assert.deepEqual(request.body, {

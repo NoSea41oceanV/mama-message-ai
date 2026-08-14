@@ -672,7 +672,12 @@ async function pollSamplingVideo(jobId) {
     }
     await delayWithSignal(2500, signal);
   }
-  throw new Error("動画生成が続いています。大人向け画面を開くと進捗を再確認できます。");
+  state.videoGeneration = {
+    ...state.videoGeneration,
+    status: "processing",
+    message: "Tavusで本人Faceを準備しています。画面を閉じても処理は続きます。",
+  };
+  renderVideoGeneration(state.videoGeneration);
 }
 
 function resumeSamplingVideoPolling(jobId) {

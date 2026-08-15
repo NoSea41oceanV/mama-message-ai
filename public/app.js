@@ -99,41 +99,196 @@ const samplingPanel = document.querySelector(".sampling-panel");
 const openRegistrationButton = document.querySelector("#openRegistrationButton");
 const favoriteEndingsInput = document.querySelector("#favoriteEndingsInput");
 const favoritePhrasesInput = document.querySelector("#favoritePhrasesInput");
-const replyExamplesInput = document.querySelector("#replyExamplesInput");
+const scenarioStyleFields = document.querySelector("#scenarioStyleFields");
 const sampleScenarioProgress = document.querySelector("#sampleScenarioProgress");
 const sampleScenarioTitle = document.querySelector("#sampleScenarioTitle");
 const sampleScenarioExamples = document.querySelector("#sampleScenarioExamples");
+const sampleSentenceProgress = document.querySelector("#sampleSentenceProgress");
+const scenarioRecordingStatus = document.querySelector("#scenarioRecordingStatus");
 const previousScenarioButton = document.querySelector("#previousScenarioButton");
 const nextScenarioButton = document.querySelector("#nextScenarioButton");
+const registrationKicker = document.querySelector("#registrationKicker");
+const registrationStepButtons = [...document.querySelectorAll("[data-registration-step]")];
+const registrationStepPanels = [...document.querySelectorAll("[data-registration-panel]")];
+const registrationStepBack = document.querySelector("#registrationStepBack");
+const registrationStepNext = document.querySelector("#registrationStepNext");
+const registrationSkipStyle = document.querySelector("#registrationSkipStyle");
+const registrationPhotoSummary = document.querySelector("#registrationPhotoSummary");
+const registrationVoiceSummary = document.querySelector("#registrationVoiceSummary");
+const registrationStyleSummary = document.querySelector("#registrationStyleSummary");
 
 const guardianProfileStorageKey = "guardian-ai.profile-id.v1";
 const maxVoiceSampleSeconds = 360;
 const maxVoiceSampleBytes = 20 * 1024 * 1024;
+const combinedSampleRate = 16_000;
+const combinedClipGapSeconds = 0.15;
 let guardianProfileId;
 
 const sampleScenarios = [
-  { title: "ほめるとき", examples: ["わあ、さいごまでできたんだね！", "がんばっていたの、ちゃんとわかってるよ。", "できたね。いっしょにうれしいな。"] },
-  { title: "かなしいとき", examples: ["かなしかったね。ここでいっしょにいるよ。", "ないてもだいじょうぶだよ。", "おちつくまで、ゆっくりでいいからね。"] },
-  { title: "おちつかせるとき", examples: ["だいじょうぶ。ゆっくりひとつずつやろうね。", "いっかい、ふーっていきをはいてみようか。", "あわてなくていいよ。そばにいるひととやってみよう。"] },
-  { title: "はげますとき", examples: ["もうすこしだけ、いっしょにやってみようか。", "うまくいかなくても、やってみたことがすてきだよ。", "あなたならだいじょうぶ。ゆっくりでいいよ。"] },
-  { title: "きもちをきりかえるとき", examples: ["つぎは、なにをしてまとうか。", "あとひとつやったら、べつのことをしてみよう。", "そばにいるひとと、たのしいことをひとつえらぼうか。"] },
-  { title: "おなか・ねむさなどをきくとき", examples: ["おなかがすいたのかな。", "ねむたくなってきた？", "おみずをのんで、すこしやすもうか。"] },
-  { title: "おはなしをきくとき", examples: ["うんうん、それでどうなったの？", "そうだったんだね。もっときかせて。", "いちばんたのしかったのは、どれだった？"] },
-  { title: "やさしくききかえすとき", examples: ["もういちど、ゆっくりおしえてくれる？", "こっちとこっち、どちらのことかな？", "うまくわからなかったから、いっしょにかくにんしよう。"] },
+  { title: "ほめるとき", question: "ほめるとき、普段どんな言葉をかけますか？", placeholder: "例：わあ、最後までできたんだね！", prompts: [
+    { intent: "最後までできたことをほめる", example: "わあ、さいごまでできたんだね！" },
+    { intent: "がんばっていたことを認める", example: "がんばっていたの、ちゃんとわかってるよ。" },
+    { intent: "できた喜びを一緒に伝える", example: "できたね。いっしょにうれしいな。" },
+  ] },
+  { title: "かなしいとき", question: "悲しそうなとき、普段どんな言葉をかけますか？", placeholder: "例：かなしかったね。ここにいるよ", prompts: [
+    { intent: "悲しかった気持ちを受け止める", example: "かなしかったね。ここでいっしょにいるよ。" },
+    { intent: "泣いてもよいと安心させる", example: "ないてもだいじょうぶだよ。" },
+    { intent: "落ち着くまで待つと伝える", example: "おちつくまで、ゆっくりでいいからね。" },
+  ] },
+  { title: "おちつかせるとき", question: "慌てているとき、どう落ち着かせますか？", placeholder: "例：あわてなくて大丈夫。ひとつずつやろう", prompts: [
+    { intent: "一つずつでよいと伝える", example: "だいじょうぶ。ゆっくりひとつずつやろうね。" },
+    { intent: "ゆっくり呼吸するよう促す", example: "いっかい、ふーっていきをはいてみようか。" },
+    { intent: "そばの大人と一緒にやるよう促す", example: "あわてなくていいよ。そばにいるひととやってみよう。" },
+  ] },
+  { title: "はげますとき", question: "挑戦を励ますとき、普段どう伝えますか？", placeholder: "例：ゆっくりでいいよ。もう一度やってみようか", prompts: [
+    { intent: "もう少し一緒にやろうと誘う", example: "もうすこしだけ、いっしょにやってみようか。" },
+    { intent: "挑戦したこと自体をほめる", example: "うまくいかなくても、やってみたことがすてきだよ。" },
+    { intent: "ゆっくりでよいと励ます", example: "あなたならだいじょうぶ。ゆっくりでいいよ。" },
+  ] },
+  { title: "きもちをきりかえるとき", question: "次の行動へ切り替えるとき、どう声をかけますか？", placeholder: "例：あとひとつやったら、次にしようか", prompts: [
+    { intent: "次にすることを一緒に考える", example: "つぎは、なにをしてみようか。" },
+    { intent: "あと一つで切り替えると伝える", example: "あとひとつやったら、べつのことをしてみよう。" },
+    { intent: "そばの大人と楽しいことを選ぶよう促す", example: "そばにいるひとと、たのしいことをひとつえらぼうか。" },
+  ] },
+  { title: "おなか・ねむさなどをきくとき", question: "お腹・眠さ・のどの渇きを確かめるとき、どう聞きますか？", placeholder: "例：おなかすいた？お水飲んでみる？", prompts: [
+    { intent: "お腹が空いたか聞く", example: "おなかがすいたのかな。" },
+    { intent: "眠くなったか聞く", example: "ねむたくなってきた？" },
+    { intent: "水を飲んで休むよう勧める", example: "おみずをのんで、すこしやすもうか。" },
+  ] },
+  { title: "おはなしをきくとき", question: "話の続きを聞きたいとき、普段どう聞きますか？", placeholder: "例：うんうん、それでどうなったの？", prompts: [
+    { intent: "話の続きを聞く", example: "うんうん、それでどうなったの？" },
+    { intent: "もっと聞かせてと伝える", example: "そうだったんだね。もっときかせて。" },
+    { intent: "一番楽しかったことを聞く", example: "いちばんたのしかったのは、どれだった？" },
+  ] },
+  { title: "やさしくききかえすとき", question: "聞き取れなかったとき、どう聞き返しますか？", placeholder: "例：もう一度ゆっくり教えてくれる？", prompts: [
+    { intent: "もう一度ゆっくり話してもらう", example: "もういちど、ゆっくりおしえてくれる？" },
+    { intent: "二つの候補から確認する", example: "こっちとこっち、どちらのことかな？" },
+    { intent: "分からなかったので一緒に確認すると伝える", example: "うまくわからなかったから、いっしょにかくにんしよう。" },
+  ] },
 ];
 let registrationScenarioIndex = 0;
+let registrationSentenceIndex = 0;
+let registrationStepIndex = 0;
+const registrationStepLabels = ["声の登録へ", "話し方の登録へ", "確認へ", "登録してホームへ"];
+
+function sampleClipIndex(scenarioIndex = registrationScenarioIndex, sentenceIndex = registrationSentenceIndex) {
+  return scenarioIndex * 3 + sentenceIndex;
+}
+
+function renderScenarioStyleFields() {
+  scenarioStyleFields.replaceChildren(...sampleScenarios.map((scenario, index) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "situation-style-field";
+    const label = document.createElement("label");
+    label.className = "field-label";
+    label.htmlFor = `scenarioStyle${index}`;
+    label.textContent = scenario.question;
+    const input = document.createElement("textarea");
+    input.id = `scenarioStyle${index}`;
+    input.dataset.situation = scenario.title;
+    input.className = "text-input scenario-style-input";
+    input.rows = 2;
+    input.maxLength = 120;
+    input.placeholder = scenario.placeholder;
+    wrapper.append(label, input);
+    return wrapper;
+  }));
+}
 
 function renderSampleScenario() {
   const scenario = sampleScenarios[registrationScenarioIndex];
-  sampleScenarioProgress.textContent = `${registrationScenarioIndex + 1} / ${sampleScenarios.length}`;
+  const clipIndex = sampleClipIndex();
+  const recordedCount = state.sampleVoiceClips.filter(Boolean).length;
+  sampleScenarioProgress.textContent = "音声サンプル録音";
   sampleScenarioTitle.textContent = scenario.title;
-  sampleScenarioExamples.replaceChildren(...scenario.examples.map((sentence) => {
+  sampleSentenceProgress.textContent = `${clipIndex + 1} / 24`;
+  const recording = state.sampleVoiceRecorder?.state === "recording";
+  sampleScenarioExamples.replaceChildren(...scenario.prompts.map((prompt, sentenceIndex) => {
+    const sentenceClipIndex = sampleClipIndex(registrationScenarioIndex, sentenceIndex);
+    const recorded = Boolean(state.sampleVoiceClips[sentenceClipIndex]);
     const item = document.createElement("li");
-    item.textContent = sentence;
+    item.className = sentenceIndex === registrationSentenceIndex ? "is-active" : "";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "sample-sentence-choice";
+    button.disabled = recording;
+    button.setAttribute("aria-current", sentenceIndex === registrationSentenceIndex ? "step" : "false");
+    const status = document.createElement("span");
+    status.className = recorded ? "sentence-state is-recorded" : "sentence-state";
+    status.textContent = recorded ? "録音済み" : sentenceIndex === registrationSentenceIndex ? "次に録音" : "未録音";
+    const content = document.createElement("span");
+    content.className = "sentence-content";
+    const intent = document.createElement("strong");
+    intent.className = "sentence-intent";
+    intent.textContent = `伝える内容：${prompt.intent}`;
+    const example = document.createElement("span");
+    example.className = "sentence-example";
+    example.textContent = `例：${prompt.example}`;
+    content.append(intent, example);
+    button.append(status, content);
+    button.addEventListener("click", () => {
+      registrationSentenceIndex = sentenceIndex;
+      renderSampleScenario();
+    });
+    item.append(button);
     return item;
   }));
-  previousScenarioButton.disabled = registrationScenarioIndex === 0;
-  nextScenarioButton.textContent = registrationScenarioIndex === sampleScenarios.length - 1 ? "最初の場面へ" : "次の場面";
+  sampleRecordButton.textContent = state.sampleVoiceRecorder?.state === "recording"
+    ? "録音を止める"
+    : state.sampleVoiceClips[clipIndex] ? "この言い方を録り直す" : "この言い方を録音";
+  scenarioRecordingStatus.textContent = state.sampleVoiceClips[clipIndex]
+    ? "録音済みです"
+    : "未録音です";
+  if (!state.sampleVoiceRecorder || state.sampleVoiceRecorder.state !== "recording") {
+    sampleVoiceLabel.textContent = recordedCount === 24
+      ? "24 / 24文 録音完了・結合済み"
+      : `${recordedCount} / 24文 録音済み`;
+  }
+  previousScenarioButton.disabled = recording || registrationScenarioIndex === 0;
+  nextScenarioButton.disabled = recording;
+  nextScenarioButton.textContent = registrationScenarioIndex === sampleScenarios.length - 1 ? "最初の場面へ ↺" : "次の場面 →";
+  updateRegistrationSummary();
+  updateRegistrationNavigation();
+}
+
+function updateRegistrationSummary() {
+  registrationPhotoSummary.textContent = state.samplePhoto || state.sample?.posterUrl ? "選択済み" : "未選択";
+  const recordedCount = state.sampleVoiceClips.filter(Boolean).length;
+  registrationVoiceSummary.textContent = state.sampleVoiceBlob
+    ? state.sampleVoiceFromClips ? `${recordedCount} / 24件 録音済み` : "音声を選択済み"
+    : state.sample?.configured ? "登録済み" : "未録音";
+  const situationCount = [...document.querySelectorAll(".scenario-style-input")]
+    .filter((input) => input.value.trim()).length;
+  const hasCommonStyle = Boolean(favoriteEndingsInput.value.trim() || favoritePhrasesInput.value.trim());
+  registrationStyleSummary.textContent = situationCount || hasCommonStyle
+    ? `${situationCount} / 8場面 入力済み`
+    : "あとから変更できます";
+}
+
+function updateRegistrationNavigation() {
+  const recording = state.sampleVoiceRecorder?.state === "recording";
+  registrationStepBack.hidden = registrationStepIndex === 0;
+  registrationStepBack.disabled = recording;
+  registrationStepNext.textContent = registrationStepLabels[registrationStepIndex];
+  registrationStepNext.disabled = recording || (registrationStepIndex === 3 && ![
+    faceConsentCheck,
+    voiceConsentCheck,
+    externalVoiceCloningConsentCheck,
+  ].every((input) => input.checked));
+  registrationStepButtons.forEach((button) => { button.disabled = recording; });
+}
+
+function showRegistrationStep(step) {
+  if (state.sampleVoiceRecorder?.state === "recording") return;
+  registrationStepIndex = Math.max(0, Math.min(registrationStepPanels.length - 1, step));
+  registrationStepPanels.forEach((panel, index) => panel.classList.toggle("is-active", index === registrationStepIndex));
+  registrationStepButtons.forEach((button, index) => {
+    if (index === registrationStepIndex) button.setAttribute("aria-current", "step");
+    else button.removeAttribute("aria-current");
+  });
+  registrationKicker.textContent = state.registrationFirstRun ? "はじめての準備" : "登録内容を変更";
+  updateRegistrationSummary();
+  updateRegistrationNavigation();
 }
 
 function getGuardianProfileId() {
@@ -160,6 +315,7 @@ function profileFetch(url, options = {}) {
 
 const state = {
   screen: "entry",
+  registrationFirstRun: false,
   sessionId: crypto.randomUUID(),
   conversationId: crypto.randomUUID(),
   consent: null,
@@ -180,10 +336,12 @@ const state = {
   sampleVoiceRecorder: null,
   sampleVoiceStream: null,
   sampleVoiceChunks: [],
+  sampleVoiceClips: Array(24).fill(null),
+  sampleRecordingClipIndex: null,
+  sampleVoiceFromClips: false,
   sampleVoiceDurationSeconds: null,
   sampleRecordStartedAt: 0,
   sampleRecordTimer: null,
-  sampleAutoStopTimer: null,
   videoGeneration: null,
   videoGenerationBusy: false,
   videoGenerationPollingJobId: null,
@@ -223,7 +381,7 @@ function showScreen(name) {
   }
   state.screen = name;
   screens.forEach((screen) => screen.classList.toggle("is-active", screen.dataset.screen === name));
-  backButton.disabled = ["entry", "waiting"].includes(name);
+  backButton.disabled = ["entry", "waiting"].includes(name) || (name === "registration" && state.registrationFirstRun);
   adultButton.hidden = name !== "setup";
   document.querySelector(`[data-screen="${name}"] h1`)?.focus?.();
 }
@@ -431,7 +589,6 @@ function stopSampleTracks() {
   state.sampleVoiceStream?.getTracks().forEach((track) => track.stop());
   state.sampleVoiceStream = null;
   clearInterval(state.sampleRecordTimer);
-  clearTimeout(state.sampleAutoStopTimer);
 }
 
 function readAudioDuration(url) {
@@ -467,11 +624,93 @@ async function setSampleVoice(blob, knownDurationSeconds = null) {
   sampleVoiceLabel.textContent = `${Math.round(durationSeconds)}秒・準備できました`;
 }
 
+function resampleAudioBufferToMono(buffer, targetRate = combinedSampleRate) {
+  const sourceLength = buffer.length;
+  const targetLength = Math.max(1, Math.round(buffer.duration * targetRate));
+  const mono = new Float32Array(sourceLength);
+  for (let channelIndex = 0; channelIndex < buffer.numberOfChannels; channelIndex += 1) {
+    const channel = buffer.getChannelData(channelIndex);
+    for (let index = 0; index < sourceLength; index += 1) mono[index] += channel[index] / buffer.numberOfChannels;
+  }
+  const output = new Float32Array(targetLength);
+  const ratio = buffer.sampleRate / targetRate;
+  for (let index = 0; index < targetLength; index += 1) {
+    const position = Math.min(sourceLength - 1, index * ratio);
+    const left = Math.floor(position);
+    const right = Math.min(sourceLength - 1, left + 1);
+    const mix = position - left;
+    output[index] = mono[left] * (1 - mix) + mono[right] * mix;
+  }
+  return output;
+}
+
+function encodeMonoWav(samples, sampleRate = combinedSampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeText = (offset, value) => [...value].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
+  writeText(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeText(8, "WAVE");
+  writeText(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeText(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+async function combineRecordedSampleClips() {
+  if (state.sampleVoiceClips.some((clip) => !clip)) return false;
+  scenarioRecordingStatus.textContent = "24個の録音を1本の音声へ結合しています…";
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) throw new Error("このブラウザでは録音の結合を利用できません");
+  const context = new AudioContextClass();
+  try {
+    const decoded = [];
+    for (const clip of state.sampleVoiceClips) {
+      const audioBuffer = await context.decodeAudioData(await clip.blob.arrayBuffer());
+      decoded.push(resampleAudioBufferToMono(audioBuffer));
+    }
+    const gapLength = Math.round(combinedSampleRate * combinedClipGapSeconds);
+    const totalLength = decoded.reduce((sum, samples) => sum + samples.length, 0)
+      + gapLength * (decoded.length - 1);
+    const combined = new Float32Array(totalLength);
+    let offset = 0;
+    for (const samples of decoded) {
+      combined.set(samples, offset);
+      offset += samples.length + gapLength;
+    }
+    const wav = encodeMonoWav(combined);
+    await setSampleVoice(wav, combined.length / combinedSampleRate);
+    state.sampleVoiceFromClips = true;
+    sampleVoiceLabel.textContent = "24 / 24文 録音完了・結合済み";
+    scenarioRecordingStatus.textContent = "録音が終わりました。下の同意を確認して登録してください。";
+    return true;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+function advanceSampleSentence(current = sampleClipIndex()) {
+  if (current >= 23) return;
+  const next = current + 1;
+  registrationScenarioIndex = Math.floor(next / 3);
+  registrationSentenceIndex = next % 3;
+}
+
 async function stopSampleRecording() {
   if (!state.sampleVoiceRecorder || state.sampleVoiceRecorder.state === "inactive") return;
   state.sampleVoiceRecorder.stop();
   stopSampleTracks();
-  sampleRecordButton.textContent = "録音する";
 }
 
 async function startSampleRecording() {
@@ -487,21 +726,38 @@ async function startSampleRecording() {
     state.sampleVoiceRecorder.addEventListener("stop", async () => {
       try {
         const blob = new Blob(state.sampleVoiceChunks, { type: state.sampleVoiceRecorder.mimeType || "audio/webm" });
-        const durationSeconds = Math.min(maxVoiceSampleSeconds, (Date.now() - state.sampleRecordStartedAt) / 1000);
-        await setSampleVoice(blob, durationSeconds);
+        const durationSeconds = (Date.now() - state.sampleRecordStartedAt) / 1000;
+        if (durationSeconds < 0.4 || blob.size < 200) throw new Error("録音が短すぎます。普段の言い方でもう一度話してください");
+        const recordedIndex = state.sampleRecordingClipIndex;
+        state.sampleVoiceClips[recordedIndex] = { blob, durationSeconds };
+        state.sampleVoiceFromClips = true;
+        if (state.sampleVoiceClips.every(Boolean)) await combineRecordedSampleClips();
+        else {
+          advanceSampleSentence(recordedIndex);
+          renderSampleScenario();
+          scenarioRecordingStatus.textContent = "録音しました。次の内容を普段の言い方で話してください。";
+        }
       } catch (error) {
         samplingStatus.textContent = error.message;
+        renderSampleScenario();
       }
     }, { once: true });
     state.sampleVoiceRecorder.start(250);
     state.sampleRecordStartedAt = Date.now();
+    state.sampleRecordingClipIndex = sampleClipIndex();
+    state.sampleVoiceBlob = null;
+    state.sampleVoiceDurationSeconds = null;
+    if (!state.sampleVoiceFromClips) state.sampleVoiceClips = Array(24).fill(null);
+    state.sampleVoiceFromClips = true;
+    sampleVoicePreview.hidden = true;
     sampleRecordButton.textContent = "録音を止める";
-    sampleVoiceLabel.textContent = "録音中 0秒";
+    previousScenarioButton.disabled = true;
+    nextScenarioButton.disabled = true;
+    scenarioRecordingStatus.textContent = "録音中 0秒・読み終わったら止めてください";
     state.sampleRecordTimer = setInterval(() => {
-      const seconds = Math.min(maxVoiceSampleSeconds, Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000));
-      sampleVoiceLabel.textContent = `録音中 ${seconds}秒`;
+      const seconds = Math.floor((Date.now() - state.sampleRecordStartedAt) / 1000);
+      scenarioRecordingStatus.textContent = `録音中 ${seconds}秒・読み終わったら止めてください`;
     }, 250);
-    state.sampleAutoStopTimer = setTimeout(stopSampleRecording, maxVoiceSampleSeconds * 1000);
   } catch {
     samplingStatus.textContent = "マイクを使えませんでした。音声ファイルを選んでください。";
   }
@@ -542,37 +798,13 @@ function videoStatusLabel(status) {
 }
 
 function friendlyVideoFailureMessage(message) {
-  const detail = String(message ?? "");
-  if (detail.includes("TAVUS_PUBLIC_URL_REQUIRED")) {
-    return "本人Faceの作成には、Tavusが写真を取得できる公開HTTPS環境が必要です。";
-  }
-  if (detail.includes("TAVUS") && detail.includes("HTTP 401")) return "TavusのAPIキーを確認してください。";
-  if (detail.includes("TAVUS") && detail.includes("HTTP 429")) return "Tavusの利用上限に達しています。利用枠を確認してください。";
-  if (detail.includes("TAVUS")) return "Tavusで本人Faceを準備できませんでした。写真、利用枠、API設定を確認してください。";
-  if (detail.includes("HEYGEN") && detail.includes("HTTP 401")) {
-    return "HeyGenのAPIキーを確認してください。";
-  }
-  if (detail.includes("HEYGEN") && detail.includes("HTTP 429")) {
-    return "HeyGenが混み合っているか、利用上限に達しています。少し待ってからもう一度お試しください。";
-  }
-  if (detail.includes("HEYGEN")) {
-    return "HeyGenで本人アバターを準備できませんでした。写真、利用枠、API設定を確認してください。";
-  }
-  if (detail.includes("insufficient_user_quota")) {
-    return "OrcaRouterの通常ウォレット残高が不足しています。請求画面で1回限りのクレジットを追加してから、もう一度お試しください。";
-  }
-  if (detail.includes("HTTP 403")) {
-    return "OrcaRouterでKling動画が拒否されました。ワークスペース残高と、プロモーションクレジットの動画利用可否を確認してください。";
-  }
-  if (detail.includes("HTTP 401")) return "OrcaRouterのAPIキーを確認してください。";
-  if (detail.includes("HTTP 429")) return "動画生成が混み合っています。少し待ってからもう一度お試しください。";
-  return detail || "動画を生成できませんでした。もう一度お試しください。";
+  return message ? "本人動画を準備できませんでした。もう一度お試しください。" : "本人動画を準備できませんでした。";
 }
 
 function renderVideoGeneration(value = state.sample) {
   const tavus = value?.tavus ?? state.sample?.tavus ?? null;
   if (tavus) {
-    videoGenerationTitle.textContent = "Tavus Face";
+    videoGenerationTitle.textContent = "本人動画";
     state.tavus = tavus;
     const generation = normalizeVideoGeneration(value);
     state.videoGeneration = generation;
@@ -584,7 +816,7 @@ function renderVideoGeneration(value = state.sample) {
     sampleVideoPreview.load();
     generateVideoButton.hidden = false;
     generateVideoButton.disabled = !active || !videoConsentCheck.checked || working || tavus.faceCreationAvailable !== true;
-    generateVideoButton.textContent = customFaceReady ? "本人Faceを作り直す" : "写真から本人Faceを作る";
+    generateVideoButton.textContent = customFaceReady ? "本人動画を作り直す" : "本人動画を作る";
     videoConsentCheck.disabled = !active || tavus.streamingAvailable !== true || working;
     sampleVideoBadge.classList.toggle("is-ready", tavus.streamingAvailable === true);
     sampleVideoBadge.classList.toggle("is-progress", working);
@@ -592,36 +824,36 @@ function renderVideoGeneration(value = state.sample) {
 
     if (!tavus.streamingAvailable) {
       sampleVideoBadge.textContent = "未接続";
-      videoConsentDescription.textContent = "返信音声をTavusへ送信し、リアルタイム動画を生成することに同意します";
-      videoGenerationStatus.textContent = "Tavusへ接続できません。API設定を確認してください。";
+      videoConsentDescription.textContent = "写真と返信音声をTavusへ送信し、本人動画を作ることに同意します";
+      videoGenerationStatus.textContent = "本人動画は現在利用できません。";
     } else if (customFaceReady) {
-      sampleVideoBadge.textContent = "本人Face準備済み";
-      videoConsentDescription.textContent = "返信音声をTavusの本人Faceへ送信し、リアルタイム動画を生成することに同意します";
-      videoGenerationStatus.textContent = "本人Faceを使えます。チェックを入れると、次の返答から表情と口の動く動画になります。";
+      sampleVideoBadge.textContent = "準備済み";
+      videoConsentDescription.textContent = "返信音声をTavusへ送信し、本人動画を作ることに同意します";
+      videoGenerationStatus.textContent = "本人動画を使えます。";
     } else if (working) {
-      sampleVideoBadge.textContent = generation.status === "queued" ? "受付済み" : "本人Face生成中";
-      videoConsentDescription.textContent = "登録写真と返信音声をTavusへ送信し、本人Faceとリアルタイム動画を生成することに同意します";
-      videoGenerationStatus.textContent = "Tavusで本人Faceを準備しています。画面を閉じても処理は続きます。";
+      sampleVideoBadge.textContent = generation.status === "queued" ? "受付済み" : "準備中";
+      videoConsentDescription.textContent = "写真と返信音声をTavusへ送信し、本人動画を作ることに同意します";
+      videoGenerationStatus.textContent = "本人動画を準備しています。";
     } else if (generation.status === "failed") {
       sampleVideoBadge.textContent = "要再試行";
-      videoConsentDescription.textContent = "登録写真と返信音声をTavusへ送信し、本人Faceとリアルタイム動画を生成することに同意します";
+      videoConsentDescription.textContent = "写真と返信音声をTavusへ送信し、本人動画を作ることに同意します";
       videoGenerationStatus.textContent = friendlyVideoFailureMessage(generation.message);
     } else if (!tavus.faceCreationAvailable) {
-      sampleVideoBadge.textContent = "テスト接続済み";
-      videoConsentDescription.textContent = "返信音声をTavusの公開テストFaceへ送信し、動作確認することに同意します";
-      videoGenerationStatus.textContent = "リアルタイム接続は利用できます。本人Faceの作成には、Tavusが写真を取得できる公開HTTPS環境が必要です。";
+      sampleVideoBadge.textContent = "利用可能";
+      videoConsentDescription.textContent = "返信音声をTavusへ送信し、動画を作ることに同意します";
+      videoGenerationStatus.textContent = "テスト動画を利用できます。";
     } else {
-      sampleVideoBadge.textContent = "テスト接続済み";
-      videoConsentDescription.textContent = "登録写真と返信音声をTavusへ送信し、本人Faceとリアルタイム動画を生成することに同意します";
+      sampleVideoBadge.textContent = "利用可能";
+      videoConsentDescription.textContent = "写真と返信音声をTavusへ送信し、本人動画を作ることに同意します";
       videoGenerationStatus.textContent = active
-        ? "現在は公開テストFaceです。同意を確認して「写真から本人Faceを作る」を押してください。"
+        ? "同意を確認して「本人動画を作る」を押してください。"
         : "先に写真と声を登録してください。";
     }
     return;
   }
   const liveAvatar = value?.liveAvatar ?? state.sample?.liveAvatar ?? null;
   if (liveAvatar) {
-    videoGenerationTitle.textContent = "LiveAvatar";
+    videoGenerationTitle.textContent = "本人動画";
     state.liveAvatar = liveAvatar;
     const active = Boolean(state.sample?.configured && state.sample?.active);
     sampleVideoPreview.hidden = true;
@@ -634,16 +866,16 @@ function renderVideoGeneration(value = state.sample) {
 
     if (!liveAvatar.configured) {
       sampleVideoBadge.textContent = "未接続";
-      videoConsentDescription.textContent = "返信音声をLiveAvatarへ送信し、リアルタイム動画を生成することに同意します";
-      videoGenerationStatus.textContent = "LiveAvatarへ接続できません。API設定を確認してください。";
+      videoConsentDescription.textContent = "返信音声をLiveAvatarへ送信し、本人動画を作ることに同意します";
+      videoGenerationStatus.textContent = "本人動画は現在利用できません。";
     } else if (liveAvatar.customAvatarConfigured) {
       sampleVideoBadge.textContent = "本人設定済み";
-      videoConsentDescription.textContent = "返信音声を本人のLiveAvatarへ送信し、リアルタイム動画を生成することに同意します";
-      videoGenerationStatus.textContent = "本人のLiveAvatarへ接続できます。チェックを入れると、次の返答からリアルタイム動画を使います。";
+      videoConsentDescription.textContent = "返信音声をLiveAvatarへ送信し、本人動画を作ることに同意します";
+      videoGenerationStatus.textContent = "本人動画を使えます。";
     } else {
-      sampleVideoBadge.textContent = "テスト接続済み";
-      videoConsentDescription.textContent = "返信音声をLiveAvatarの公開テストアバターへ送信し、動作確認することに同意します";
-      videoGenerationStatus.textContent = "API接続済みです。現在は公開テストアバターです。本人のLiveAvatarはまだ作成されていません。";
+      sampleVideoBadge.textContent = "利用可能";
+      videoConsentDescription.textContent = "返信音声をLiveAvatarへ送信し、動画を作ることに同意します";
+      videoGenerationStatus.textContent = "テスト動画を利用できます。";
     }
     return;
   }
@@ -658,7 +890,7 @@ function renderVideoGeneration(value = state.sample) {
   sampleVideoBadge.classList.toggle("is-failed", generation.status === "failed");
   videoConsentCheck.disabled = !active || working;
   generateVideoButton.disabled = !active || !videoConsentCheck.checked || working;
-  generateVideoButton.textContent = generation.status === "ready" ? "本人アバターを作り直す" : "本人アバターを準備する";
+  generateVideoButton.textContent = generation.status === "ready" ? "本人動画を作り直す" : "本人動画を作る";
 
   if (generation.videoUrl) {
     if (sampleVideoPreview.src !== new URL(generation.videoUrl, location.href).href) {
@@ -671,12 +903,12 @@ function renderVideoGeneration(value = state.sample) {
     sampleVideoPreview.load();
   }
 
-  if (generation.status === "queued") videoGenerationStatus.textContent = "本人アバターの準備を受け付けました。順番を待っています。";
-  else if (generation.status === "processing") videoGenerationStatus.textContent = "本人アバターを準備しています。画面を閉じても処理は続きます。";
-  else if (generation.status === "ready") videoGenerationStatus.textContent = "動画素材の準備ができました。次の返答から、本人の口や表情が動く動画を作ります。";
+  if (generation.status === "queued") videoGenerationStatus.textContent = "本人動画を受け付けました。";
+  else if (generation.status === "processing") videoGenerationStatus.textContent = "本人動画を準備しています。";
+  else if (generation.status === "ready") videoGenerationStatus.textContent = "本人動画を使えます。";
   else if (generation.status === "failed") videoGenerationStatus.textContent = friendlyVideoFailureMessage(generation.message);
-  else if (generation.status === "unavailable") videoGenerationStatus.textContent = generation.message || "動画生成サービスを利用できません。接続設定を確認してください。";
-  else videoGenerationStatus.textContent = active ? "登録写真から、本人動画に使う素材を準備できます。" : "先に写真と声を登録してください。";
+  else if (generation.status === "unavailable") videoGenerationStatus.textContent = "本人動画は現在利用できません。";
+  else videoGenerationStatus.textContent = active ? "本人動画を作れます。" : "先に写真と声を登録してください。";
 }
 
 function renderSampling(sample) {
@@ -692,9 +924,12 @@ function renderSampling(sample) {
   speechRateSelect.value = String(sample?.speechRate ?? 0.82);
   favoriteEndingsInput.value = (sample?.speakingStyle?.favoriteEndings ?? []).join("、");
   favoritePhrasesInput.value = (sample?.speakingStyle?.favoritePhrases ?? []).join("\n");
-  replyExamplesInput.value = (sample?.speakingStyle?.replyExamples ?? [])
-    .map((item) => `${item.situation}｜${item.reply}`)
-    .join("\n");
+  const examplesBySituation = new Map(
+    (sample?.speakingStyle?.replyExamples ?? []).map((item) => [item.situation, item.reply]),
+  );
+  document.querySelectorAll(".scenario-style-input").forEach((input) => {
+    input.value = examplesBySituation.get(input.dataset.situation) ?? "";
+  });
   if (!speechRateSelect.value) speechRateSelect.value = "0.82";
   saveFavoriteTopicsButton.disabled = !configured;
   deleteSampleButton.disabled = !configured;
@@ -712,11 +947,11 @@ function renderSampling(sample) {
     sampleVoicePreview.src = sample.voicePreviewUrl;
     sampleVoicePreview.hidden = false;
     sampleVoiceLabel.textContent = sample.voiceCloningAvailable
-      ? "音声クローン済み・再生できます"
-      : "登録済み・クローン未作成";
+      ? "登録した声を再生できます"
+      : "声は登録済みです";
   } else if (!state.sampleVoiceBlob) {
     sampleVoicePreview.hidden = true;
-    sampleVoiceLabel.textContent = "全24文・4〜6分が目安";
+    sampleVoiceLabel.textContent = `${state.sampleVoiceClips.filter(Boolean).length} / 24文 録音済み`;
   }
   faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
   voiceConsentCheck.checked = Boolean(
@@ -725,6 +960,8 @@ function renderSampling(sample) {
     && configured,
   );
   renderVideoGeneration(sample);
+  updateRegistrationSummary();
+  updateRegistrationNavigation();
 }
 
 async function loadSampling() {
@@ -756,17 +993,9 @@ function textListFromInput(input, maximum) {
 }
 
 function replyExamplesFromInput() {
-  return replyExamplesInput.value
-    .split(/\n/)
-    .map((line) => {
-      const separator = line.search(/[｜|]/);
-      if (separator < 0) return null;
-      return {
-        situation: line.slice(0, separator).trim(),
-        reply: line.slice(separator + 1).trim(),
-      };
-    })
-    .filter((item) => item?.situation && item?.reply)
+  return [...document.querySelectorAll(".scenario-style-input")]
+    .map((input) => ({ situation: input.dataset.situation, reply: input.value.trim() }))
+    .filter((item) => item.reply)
     .slice(0, 12);
 }
 
@@ -808,7 +1037,7 @@ async function saveFavoriteTopics() {
 
 async function previewClonedVoice() {
   previewCloneVoiceButton.disabled = true;
-  samplingStatus.textContent = "クローン音声を準備しています…";
+  samplingStatus.textContent = "登録した声を準備しています…";
   try {
     const response = await profileFetch("/api/sampling/voice-clone/preview", {
       method: "POST",
@@ -816,11 +1045,11 @@ async function previewClonedVoice() {
       body: JSON.stringify({}),
     });
     const result = await response.json();
-    if (!response.ok || !result.audioUrl) throw new Error("クローン音声を生成できませんでした");
+    if (!response.ok || !result.audioUrl) throw new Error("登録した声を準備できませんでした");
     cloneVoicePreview.src = result.audioUrl;
     cloneVoicePreview.hidden = false;
     await cloneVoicePreview.play();
-    samplingStatus.textContent = "クローン音声を再生しています";
+    samplingStatus.textContent = "登録した声を再生しています";
   } catch (error) {
     samplingStatus.textContent = error.message;
   } finally {
@@ -837,25 +1066,29 @@ async function refreshConsent() {
 async function saveSampling() {
   samplingStatus.textContent = "";
   const canReuseRegisteredPhoto = Boolean(state.sample?.configured && state.sample?.posterUrl);
+  if (state.sampleVoiceFromClips && state.sampleVoiceClips.some((clip) => !clip)) {
+    samplingStatus.textContent = `録音は ${state.sampleVoiceClips.filter(Boolean).length} / 24です。すべての内容を普段の言い方で録音してください。`;
+    return false;
+  }
   if ((!state.samplePhoto && !canReuseRegisteredPhoto) || !state.sampleVoiceBlob) {
     samplingStatus.textContent = "顔写真と声のサンプルを両方用意してください。";
-    return;
+    return false;
   }
   if (!faceConsentCheck.checked || !voiceConsentCheck.checked) {
     samplingStatus.textContent = "顔写真と声、それぞれの利用同意を確認してください。";
-    return;
+    return false;
   }
   if (!externalVoiceCloningConsentCheck.checked) {
     samplingStatus.textContent = "ElevenLabsへの外部送信と本人声クローン作成への同意を確認してください";
-    return;
+    return false;
   }
   const subjectLabel = guardianLabel.value.trim();
   if (!subjectLabel) {
     guardianLabel.focus();
-    return;
+    return false;
   }
   saveSampleButton.disabled = true;
-  samplingStatus.textContent = "素材を登録し、音声クローンを作成しています";
+  samplingStatus.textContent = "登録しています…";
   try {
     const updatingVoiceOnly = !state.samplePhoto && canReuseRegisteredPhoto;
     const response = await profileFetch(updatingVoiceOnly ? "/api/sampling/voice" : "/api/sampling", {
@@ -885,14 +1118,18 @@ async function saveSampling() {
     state.samplePhoto = null;
     state.sampleVoiceBlob = null;
     state.sampleVoiceDurationSeconds = null;
+    state.sampleVoiceClips = Array(24).fill(null);
+    state.sampleVoiceFromClips = false;
     videoConsentCheck.checked = false;
     renderSampling(data);
     await refreshConsent();
     samplingStatus.textContent = data.voiceCloningAvailable
-      ? "登録と音声クローンが完了しました。次の返答からこの声を使います。"
-      : "素材を登録しました。音声クローンはまだ利用できません。";
+      ? "登録しました。次の返答からこの声を使います。"
+      : "登録しました。声の再現は現在利用できません。";
+    return true;
   } catch (error) {
     samplingStatus.textContent = error.message;
+    return false;
   } finally {
     saveSampleButton.disabled = false;
   }
@@ -931,7 +1168,7 @@ async function pollSamplingVideo(jobId) {
   state.videoGeneration = {
     ...state.videoGeneration,
     status: "processing",
-    message: "Tavusで本人Faceを準備しています。画面を閉じても処理は続きます。",
+    message: "本人動画を準備しています。",
   };
   renderVideoGeneration(state.videoGeneration);
 }
@@ -1004,6 +1241,8 @@ async function deleteSampling() {
     state.samplePhoto = null;
     state.sampleVoiceBlob = null;
     state.sampleVoiceDurationSeconds = null;
+    state.sampleVoiceClips = Array(24).fill(null);
+    state.sampleVoiceFromClips = false;
     state.videoGenerationPollAbort?.abort();
     videoConsentCheck.checked = false;
     samplePhotoInput.value = "";
@@ -1931,6 +2170,9 @@ async function updateConsent(action) {
 
 consentCheck.addEventListener("change", () => { startSetup.disabled = !consentCheck.checked || !state.consent; });
 videoConsentCheck.addEventListener("change", () => renderVideoGeneration(state.videoGeneration));
+[faceConsentCheck, voiceConsentCheck, externalVoiceCloningConsentCheck].forEach((input) => {
+  input.addEventListener("change", updateRegistrationNavigation);
+});
 samplePhotoInput.addEventListener("change", async () => {
   samplingStatus.textContent = "";
   try {
@@ -1938,10 +2180,12 @@ samplePhotoInput.addEventListener("change", async () => {
     samplePhotoPreview.src = state.samplePhoto.previewUrl;
     samplePhotoPreview.hidden = false;
     samplePhotoLabel.textContent = "準備できました";
+    updateRegistrationSummary();
   } catch (error) {
     state.samplePhoto = null;
     samplePhotoInput.value = "";
     samplingStatus.textContent = error.message;
+    updateRegistrationSummary();
   }
 });
 sampleVoiceInput.addEventListener("change", async () => {
@@ -1949,11 +2193,15 @@ sampleVoiceInput.addEventListener("change", async () => {
   try {
     const file = sampleVoiceInput.files?.[0];
     if (!file || !file.type.startsWith("audio/")) throw new Error("音声ファイルを選んでください");
+    state.sampleVoiceClips = Array(24).fill(null);
+    state.sampleVoiceFromClips = false;
     await setSampleVoice(file);
+    updateRegistrationSummary();
   } catch (error) {
     state.sampleVoiceBlob = null;
     sampleVoiceInput.value = "";
     samplingStatus.textContent = error.message;
+    updateRegistrationSummary();
   }
 });
 sampleRecordButton.addEventListener("click", () => {
@@ -1968,16 +2216,44 @@ previewCloneVoiceButton.addEventListener("click", previewClonedVoice);
 openRegistrationButton.addEventListener("click", async () => {
   adultDialog.close();
   await loadSampling().catch((error) => { samplingStatus.textContent = error.message; });
+  state.registrationFirstRun = false;
+  showRegistrationStep(0);
   showScreen("registration");
 });
+registrationStepButtons.forEach((button) => {
+  button.addEventListener("click", () => showRegistrationStep(Number(button.dataset.registrationStep)));
+});
+registrationStepBack.addEventListener("click", () => showRegistrationStep(registrationStepIndex - 1));
+registrationSkipStyle.addEventListener("click", () => showRegistrationStep(3));
+registrationStepNext.addEventListener("click", async () => {
+  if (registrationStepIndex < registrationStepPanels.length - 1) {
+    showRegistrationStep(registrationStepIndex + 1);
+    return;
+  }
+  registrationStepNext.disabled = true;
+  const saved = await saveSampling();
+  if (saved) {
+    state.registrationFirstRun = false;
+    showScreen("entry");
+  } else {
+    updateRegistrationNavigation();
+  }
+});
+samplingPanel.addEventListener("input", updateRegistrationSummary);
 previousScenarioButton.addEventListener("click", () => {
   registrationScenarioIndex = Math.max(0, registrationScenarioIndex - 1);
+  registrationSentenceIndex = Math.max(0, state.sampleVoiceClips
+    .slice(registrationScenarioIndex * 3, registrationScenarioIndex * 3 + 3)
+    .findIndex((clip) => !clip));
   renderSampleScenario();
 });
 nextScenarioButton.addEventListener("click", () => {
   registrationScenarioIndex = registrationScenarioIndex === sampleScenarios.length - 1
     ? 0
     : registrationScenarioIndex + 1;
+  registrationSentenceIndex = Math.max(0, state.sampleVoiceClips
+    .slice(registrationScenarioIndex * 3, registrationScenarioIndex * 3 + 3)
+    .findIndex((clip) => !clip));
   renderSampleScenario();
 });
 childModeButton.addEventListener("click", () => {
@@ -2082,12 +2358,21 @@ responseAudio.addEventListener("error", () => {
 });
 
 registrationMount.append(samplingPanel);
+renderScenarioStyleFields();
 renderSampleScenario();
+showRegistrationStep(0);
 
 Promise.all([profileFetch("/api/consent").then((response) => response.json()), loadSampling()])
-  .then(([consent]) => {
+  .then(([consent, sample]) => {
     applyConsent(consent);
     connectionStatus.textContent = "じゅんびできたよ";
+    if (!sample?.configured) {
+      state.registrationFirstRun = true;
+      showRegistrationStep(0);
+      showScreen("registration");
+    } else {
+      showScreen("entry");
+    }
   })
   .catch(() => {
     adultGate.hidden = false;

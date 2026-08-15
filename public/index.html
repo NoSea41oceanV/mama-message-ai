@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おへんじ</title>
-    <link rel="stylesheet" href="/styles.css?v=26">
+    <link rel="stylesheet" href="/styles.css?v=29">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -183,11 +183,21 @@
 
       <section class="screen registration-screen" data-screen="registration" aria-labelledby="registrationTitle">
         <div class="registration-heading">
-          <p class="section-label">大人向け登録</p>
-          <h1 id="registrationTitle">写真・声・話し方を登録</h1>
-          <p class="lead">普段その子に接するときの、いつもの表情と言い方を教えてください。</p>
+          <p class="registration-kicker" id="registrationKicker">はじめての準備</p>
+          <h1 id="registrationTitle">写真と声を登録</h1>
+          <p class="lead">大人の方が約5分で設定できます。</p>
         </div>
+        <nav class="registration-stepper" id="registrationStepper" aria-label="登録手順">
+          <button type="button" data-registration-step="0" aria-current="step"><span>1</span>写真</button>
+          <button type="button" data-registration-step="1"><span>2</span>声</button>
+          <button type="button" data-registration-step="2"><span>3</span>話し方</button>
+          <button type="button" data-registration-step="3"><span>4</span>確認</button>
+        </nav>
         <div id="registrationMount"></div>
+        <div class="registration-navigation" id="registrationNavigation">
+          <button class="secondary-button" id="registrationStepBack" type="button" hidden>戻る</button>
+          <button class="primary-button" id="registrationStepNext" type="button">声の登録へ</button>
+        </div>
       </section>
 
       <footer class="app-footer">
@@ -206,20 +216,55 @@
       <section class="sampling-panel" aria-labelledby="samplingTitle">
         <div class="sampling-heading">
           <div>
-            <p class="section-label">サンプリング</p>
-            <h3 id="samplingTitle">保護者の写真と声</h3>
+            <p class="section-label">登録内容</p>
+            <h3 id="samplingTitle">写真と声</h3>
           </div>
           <span class="sample-badge" id="sampleBadge">未登録</span>
         </div>
-        <div class="registration-card registration-identity-card">
-          <span class="guardian-examples" aria-hidden="true">👩‍🦰　👨‍🦱</span>
-          <label class="field-label" for="guardianLabel">自分の呼び方</label>
-          <input id="guardianLabel" class="text-input" type="text" maxlength="20" placeholder="例：ママ、パパ、ばあば、先生" autocomplete="off">
-          <p class="sample-note">お子さまの前で使う呼び方を自由に入力できます。</p>
-        </div>
-        <div class="favorite-topics-panel">
+        <section class="registration-step-panel is-active" data-registration-panel="0" aria-labelledby="registrationPhotoTitle">
+          <h2 id="registrationPhotoTitle">まず、写真を登録します</h2>
+          <label class="sample-picker registration-photo-picker" for="samplePhotoInput">
+            <span class="guardian-examples" aria-hidden="true">👩‍🦰　👨‍🦱</span>
+            <strong>正面を向いた顔写真</strong>
+            <small>明るい場所で撮った写真がおすすめです</small>
+            <span class="file-link" id="samplePhotoLabel">写真を選ぶ</span>
+            <input id="samplePhotoInput" type="file" accept="image/jpeg,image/png,image/webp" capture="user">
+            <img id="samplePhotoPreview" alt="登録する方の写真のプレビュー" hidden>
+          </label>
+          <div class="registration-card registration-identity-card">
+            <label class="field-label" for="guardianLabel">自分の呼び方</label>
+            <input id="guardianLabel" class="text-input" type="text" maxlength="20" placeholder="例：ママ、パパ、ばあば、先生" autocomplete="off">
+            <p class="sample-note">お子さまの前で使う呼び方を自由に入力できます。</p>
+          </div>
           <label class="field-label" for="childNameInput">こどものよびかた</label>
           <input id="childNameInput" class="text-input" type="text" maxlength="20" placeholder="れい：ひなたちゃん" autocomplete="off">
+        </section>
+        <section class="registration-step-panel" data-registration-panel="1" aria-labelledby="registrationVoiceTitle">
+          <h2 id="registrationVoiceTitle">次に、声を登録します</h2>
+          <p class="sample-note registration-step-helper">伝える内容を、いつもの言葉に言い換えて話してください。</p>
+          <div class="sample-picker voice-picker registration-voice-summary">
+            <span class="sample-icon" aria-hidden="true">声</span>
+            <strong>声のサンプル</strong>
+            <span id="sampleVoiceLabel">0 / 24文 録音済み</span>
+            <label class="file-link" for="sampleVoiceInput">録音済みの音声ファイルを選ぶ</label>
+            <input id="sampleVoiceInput" type="file" accept="audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4">
+            <audio id="sampleVoicePreview" controls preload="metadata" hidden></audio>
+          </div>
+          <section class="sample-script scenario-recorder" aria-labelledby="sampleScenarioTitle">
+            <p class="section-label" id="sampleScenarioProgress">声のサンプル録音</p>
+            <h4 id="sampleScenarioTitle">ほめるとき</h4>
+            <p class="sample-note">表示された内容を伝えるときに普段どう言うかを考え、その言い方で話してください。例はそのまま読まなくて大丈夫です。</p>
+            <p class="sentence-progress" id="sampleSentenceProgress">1 / 24</p>
+            <ul id="sampleScenarioExamples" class="sample-sentence-list"></ul>
+            <button class="primary-button scenario-record-button" id="sampleRecordButton" type="button">この言い方を録音</button>
+            <p class="inline-status" id="scenarioRecordingStatus" role="status"></p>
+            <div class="action-row"><button class="secondary-button compact" id="previousScenarioButton" type="button">← 前の場面</button><button class="secondary-button compact" id="nextScenarioButton" type="button">次の場面 →</button></div>
+          </section>
+        </section>
+        <section class="registration-step-panel" data-registration-panel="2" aria-labelledby="registrationStyleTitle">
+          <h2 id="registrationStyleTitle">いつもの話し方を教えてください</h2>
+          <p class="sample-note registration-step-helper">ここは後からでも設定できます。</p>
+          <div class="favorite-topics-panel">
           <label class="field-label settings-field" for="speechRateSelect">はなすはやさ</label>
           <select id="speechRateSelect">
             <option value="0.7">とてもゆっくり</option>
@@ -233,78 +278,62 @@
           <label class="field-label settings-field" for="favoriteEndingsInput">よく使う語尾</label>
           <input id="favoriteEndingsInput" class="text-input" type="text" maxlength="180" placeholder="例：〜だね、〜してみようか、〜できたね" autocomplete="off">
           <label class="field-label settings-field" for="favoritePhrasesInput">よく使う言葉・口癖</label>
-          <textarea id="favoritePhrasesInput" class="text-input" rows="3" maxlength="360" placeholder="例：だいじょうぶだよ、ちゃんと見てるよ"></textarea>
-          <label class="field-label settings-field" for="replyExamplesInput">いつもの言い方の例</label>
-          <textarea id="replyExamplesInput" class="text-input" rows="4" maxlength="600" placeholder="例：ほめるとき｜わあ、最後までできたんだね！パパもうれしいよ"></textarea>
-          <p class="sample-note">1行に「場面｜いつもの言い方」を入力してください。保存前に確認できます。</p>
+          <textarea id="favoritePhrasesInput" class="text-input" rows="3" maxlength="360" placeholder="どんな場面でも使う言葉。例：だいじょうぶだよ、ちゃんと見てるよ"></textarea>
+          <fieldset class="situation-style-panel">
+            <legend>場面ごとの、いつもの言い方</legend>
+            <p class="sample-note">大まかな文章ではなく、場面ごとに普段の言い方をひとつずつ教えてください。</p>
+            <div id="scenarioStyleFields"></div>
+          </fieldset>
           <button class="secondary-button compact" id="saveFavoriteTopicsButton" type="button" disabled>おはなし設定を保存</button>
           <p id="favoriteTopicsStatus" class="inline-status" role="status"></p>
-        </div>
-        <div class="sample-grid">
-          <label class="sample-picker" for="samplePhotoInput">
-            <span class="sample-icon" aria-hidden="true">写</span>
-            <strong>顔写真</strong>
-            <span id="samplePhotoLabel">写真を選ぶ</span>
-            <input id="samplePhotoInput" type="file" accept="image/jpeg,image/png,image/webp" capture="user">
-            <img id="samplePhotoPreview" alt="登録する保護者写真のプレビュー" hidden>
-          </label>
-          <div class="sample-picker voice-picker">
-            <span class="sample-icon" aria-hidden="true">声</span>
-            <strong>声のサンプル</strong>
-            <span id="sampleVoiceLabel">全24文・4〜6分が目安</span>
-            <small class="sample-phrase">演技せず、普段その子に話すときのいつもの言い方で読んでください。</small>
-            <button class="secondary-button compact" id="sampleRecordButton" type="button">録音する</button>
-            <label class="file-link" for="sampleVoiceInput">音声を選ぶ</label>
-            <input id="sampleVoiceInput" type="file" accept="audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4">
-            <audio id="sampleVoicePreview" controls preload="metadata" hidden></audio>
           </div>
-        </div>
-        <section class="sample-script scenario-recorder" aria-labelledby="sampleScenarioTitle">
-          <p class="section-label" id="sampleScenarioProgress">1 / 8</p>
-          <h4 id="sampleScenarioTitle">ほめるとき</h4>
-          <p class="sample-note">次の3文を、いつもの言い方で読んでください。</p>
-          <ol id="sampleScenarioExamples"></ol>
-          <div class="action-row"><button class="secondary-button compact" id="previousScenarioButton" type="button">前の場面</button><button class="secondary-button compact" id="nextScenarioButton" type="button">次の場面</button></div>
+          <button class="text-button registration-skip-style" id="registrationSkipStyle" type="button">あとで設定する</button>
         </section>
-        <label class="check-row sample-consent">
-          <input id="faceConsentCheck" type="checkbox">
-          <span>顔写真をAIメッセージ作成に使うことに同意します</span>
-        </label>
-        <label class="check-row sample-consent">
-          <input id="voiceConsentCheck" type="checkbox">
-          <span>声をElevenLabsへ送信し、AI音声クローンとメッセージ作成に使うことに同意します</span>
-        </label>
-        <label class="check-row sample-consent">
-          <input id="externalVoiceCloningConsentCheck" type="checkbox">
-          <span>本人の声をElevenLabsへ送信し、本人声クローンを作成・利用することに同意します</span>
-        </label>
-        <p class="sample-note">8場面・各3文を、静かな場所で続けて録音してください。録音方式とクローン作成方式は従来と同じです。</p>
-        <div class="action-row sample-actions">
-          <button class="primary-button" id="saveSampleButton" type="button">素材を登録</button>
-          <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
-        </div>
-        <div class="action-row sample-actions" id="cloneVoicePreviewArea" hidden>
-          <button class="secondary-button" id="previewCloneVoiceButton" type="button">クローン音声を確認</button>
-          <audio id="cloneVoicePreview" controls preload="none" hidden></audio>
-        </div>
-        <p class="sample-note">写真と元音声はこのブラウザの保護者プロフィールに紐づけて暗号化保存されます。音声クローンはElevenLabsに作成され、登録削除時にElevenLabs上からも削除します。</p>
-        <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">
-          <div class="video-generation-heading">
-            <div>
-              <p class="section-label">リアルタイム動画</p>
-              <h4 id="videoGenerationTitle">リアルタイムFace</h4>
-            </div>
-            <span class="sample-badge" id="sampleVideoBadge">未作成</span>
-          </div>
-          <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
-          <p class="video-generation-copy">返答音声から、待ち時間の少ない口の動き・表情・自然な身振りをリアルタイム生成します。Tavusでは、本人同意を確認した登録写真から本人Faceも作成できます。</p>
+        <section class="registration-step-panel" data-registration-panel="3" aria-labelledby="registrationConfirmTitle">
+          <h2 id="registrationConfirmTitle">最後に確認します</h2>
+          <dl class="registration-summary">
+            <div><dt>顔写真</dt><dd id="registrationPhotoSummary">未選択</dd></div>
+            <div><dt>声</dt><dd id="registrationVoiceSummary">未録音</dd></div>
+            <div><dt>話し方</dt><dd id="registrationStyleSummary">あとから変更できます</dd></div>
+          </dl>
           <label class="check-row sample-consent">
-            <input id="videoConsentCheck" type="checkbox">
-            <span id="videoConsentDescription">返信音声を外部サービスへ送信し、リアルタイム動画を生成することに同意します</span>
+            <input id="faceConsentCheck" type="checkbox">
+            <span>顔写真をAIメッセージ作成に使うことに同意します</span>
           </label>
-          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled hidden>接続を確認する</button>
-          <p class="sample-note">接続できない場合は、動かない写真とクローン音声へ自動で戻ります。写真を傾ける擬似動画は使いません。</p>
-          <p id="videoGenerationStatus" class="inline-status" role="status"></p>
+          <label class="check-row sample-consent">
+            <input id="voiceConsentCheck" type="checkbox">
+            <span>登録した声をAIの返答に使うことに同意します</span>
+          </label>
+          <label class="check-row sample-consent">
+            <input id="externalVoiceCloningConsentCheck" type="checkbox">
+            <span>声をElevenLabsへ送信し、本人の声を再現することに同意します</span>
+          </label>
+          <div class="action-row sample-actions registration-existing-actions">
+            <button class="primary-button" id="saveSampleButton" type="button">登録する</button>
+            <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
+          </div>
+          <div class="action-row sample-actions" id="cloneVoicePreviewArea" hidden>
+            <button class="secondary-button" id="previewCloneVoiceButton" type="button">登録した声を確認</button>
+            <audio id="cloneVoicePreview" controls preload="none" hidden></audio>
+          </div>
+          <p class="sample-note">登録した写真と声は、いつでも削除できます。</p>
+          <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">
+            <div class="video-generation-heading">
+              <div>
+                <p class="section-label">動画</p>
+                <h4 id="videoGenerationTitle">本人動画</h4>
+              </div>
+              <span class="sample-badge" id="sampleVideoBadge">未作成</span>
+            </div>
+            <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
+            <p class="video-generation-copy">登録した写真と声から、返答する本人動画を作ります。</p>
+            <label class="check-row sample-consent">
+              <input id="videoConsentCheck" type="checkbox">
+              <span id="videoConsentDescription">写真と返信音声を外部サービスへ送信し、本人動画を作ることに同意します</span>
+            </label>
+            <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled hidden>接続を確認する</button>
+            <p id="videoGenerationStatus" class="inline-status" role="status"></p>
+          </section>
         </section>
         <p id="samplingStatus" class="inline-status" role="status"></p>
       </section>
@@ -321,6 +350,6 @@
 
     <script src="/vendor/liveavatar-sdk.js?v=1"></script>
     <script src="/vendor/daily-sdk.js?v=2"></script>
-    <script type="module" src="/app.js?v=32"></script>
+    <script type="module" src="/app.js?v=39"></script>
   </body>
 </html>

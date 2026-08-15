@@ -526,6 +526,69 @@ dialog::backdrop { background: rgb(8 47 85 / 52%); }
 dialog .danger-button { border-color: #b52e2e; background: #e64e4e; color: var(--white); box-shadow: none; }
 dialog .secondary-button { box-shadow: none; }
 .sampling-panel { margin: 22px 0 0; padding: 20px 0 4px; border-top: 2px solid var(--rule); border-bottom: 2px solid var(--rule); }
+.registration-screen {
+  overflow-y: auto;
+  background: #fffaf0;
+}
+.registration-screen::before,
+.registration-screen::after { display: none; }
+.registration-heading { position: relative; z-index: 1; text-align: center; }
+.registration-kicker { display: inline-block; margin: 0 0 8px; padding: 5px 13px; border-radius: 999px; background: #fff1b8; color: var(--ink-strong); font-size: 12px; font-weight: 900; }
+.registration-heading h1 { margin-bottom: 8px; color: var(--ink-strong); font-size: 32px; text-align: center; }
+.registration-heading .lead { margin: 0; color: var(--muted); font-size: 14px; text-align: center; }
+.registration-stepper { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 24px 0 8px; }
+.registration-stepper button { display: grid; justify-items: center; gap: 5px; padding: 0 1px 8px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); font-size: 12px; font-weight: 800; }
+.registration-stepper button span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #f0eee9; font-size: 15px; }
+.registration-stepper button[aria-current="step"] { border-color: var(--sun); color: var(--ink-strong); }
+.registration-stepper button[aria-current="step"] span { background: var(--sun); }
+.registration-screen .sampling-panel { margin: 0; padding: 0; border: 0; background: transparent; }
+.registration-screen .sampling-heading { display: none; }
+.registration-step-panel { display: none; padding-top: 18px; }
+.registration-step-panel.is-active { display: block; }
+.registration-step-panel > h2 { margin: 0 0 14px; color: var(--ink-strong); font-size: 22px; text-align: center; }
+.registration-step-helper { margin: -5px 0 15px; font-size: 13px; }
+.registration-navigation { display: flex; gap: 9px; margin-top: 12px; }
+.registration-navigation .primary-button { flex: 1; }
+.registration-navigation .secondary-button { min-width: 80px; }
+.registration-photo-picker { min-height: 196px; margin-bottom: 17px; padding: 18px; border-color: #f0c94d; background: #fffdf0; }
+.registration-photo-picker .guardian-examples { font-size: 43px; letter-spacing: -7px; }
+.registration-photo-picker small { color: var(--muted); font-size: 11px; }
+.registration-photo-picker .file-link { min-height: auto; padding: 8px 15px; border: 2px dashed var(--coral); border-radius: 9px; color: var(--coral-deep); text-decoration: none; }
+.registration-photo-picker img { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; object-fit: cover; }
+.registration-card { margin: 12px 0; padding: 14px; border: 1px solid #b8d5e1; border-radius: 12px; background: #f5fbfd; }
+.registration-identity-card { display: block; }
+.registration-voice-summary { min-height: 118px; margin-bottom: 14px; }
+.registration-skip-style { display: block; margin: 14px auto 0; color: var(--muted); }
+.registration-summary { margin: 0 0 17px; padding: 4px 14px; border: 1px solid #b8d5e1; border-radius: 13px; background: var(--white); }
+.registration-summary div { display: flex; justify-content: space-between; gap: 14px; padding: 12px 0; border-top: 1px solid #e5eef2; }
+.registration-summary div:first-child { border-top: 0; }
+.registration-summary dt { color: var(--muted); }
+.registration-summary dd { margin: 0; font-weight: 900; text-align: right; }
+.registration-existing-actions #saveSampleButton { display: none; }
+.registration-existing-actions { justify-content: flex-end; }
+.settings-field { margin-top: 12px; }
+.situation-style-panel { margin: 16px 0 12px; padding: 14px; border: 2px solid #9bc7da; border-radius: 12px; background: var(--white); }
+.situation-style-panel legend { padding: 0 7px; color: var(--ink-strong); font-weight: 900; }
+.situation-style-field { padding: 13px 0; border-top: 1px solid var(--rule); }
+.situation-style-field:first-child { border-top: 0; }
+.situation-style-field .field-label { margin-bottom: 7px; line-height: 1.5; }
+.scenario-style-input { width: 100%; resize: vertical; }
+.scenario-recorder { margin-top: 4px; }
+.scenario-recorder h4 { margin: 4px 0 2px; color: var(--ink-strong); font-size: 18px; }
+.sample-sentence-list { display: grid; gap: 9px; margin: 10px 0 14px; padding: 0; list-style: none; }
+.sample-sentence-list li { margin: 0; }
+.sample-sentence-choice { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 10px; width: 100%; min-height: 64px; padding: 11px 12px; border: 2px solid #b8d5e1; border-radius: 11px; background: var(--white); color: var(--ink-strong); text-align: left; cursor: pointer; }
+.sample-sentence-choice:hover { border-color: var(--sky); background: #f7fcff; }
+.sample-sentence-list li.is-active .sample-sentence-choice { border: 3px solid var(--sun); background: #fffdf0; box-shadow: 0 4px 0 var(--sun-deep); }
+.sentence-state { min-width: 58px; padding: 4px 6px; border-radius: 999px; background: #eef5f8; color: var(--muted); font-size: 10px; font-weight: 900; text-align: center; }
+.sentence-state.is-recorded { background: var(--mint-soft); color: #167a68; }
+.sample-sentence-list li.is-active .sentence-state:not(.is-recorded) { background: var(--sun); color: var(--ink-strong); }
+.sentence-content { display: grid; gap: 4px; }
+.sentence-intent { color: var(--ink-strong); font-size: 14px; line-height: 1.5; }
+.sentence-example { color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.5; }
+.sentence-progress { margin: 9px 0 2px; color: var(--sky-deep); font-size: 12px; font-weight: 900; }
+.scenario-record-button { width: 100%; min-height: 48px; margin: 7px 0 10px; }
+.scenario-recorder .action-row { margin: 0; }
 .sampling-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .sampling-heading h3 { margin: 0 0 14px; font-size: 20px; }
 .sample-badge { flex: 0 0 auto; padding: 5px 8px; border: 2px solid var(--rule); border-radius: 8px; background: #eef5f8; color: var(--muted); font-size: 12px; font-weight: 900; }
@@ -584,6 +647,12 @@ dialog .secondary-button { box-shadow: none; }
 @media (min-width: 760px) {
   body { padding: 24px; }
   .app-shell { min-height: calc(100dvh - 48px); max-height: 900px; border-radius: 8px; }
+}
+
+@media (max-width: 390px) {
+  .registration-screen { padding-inline: 16px; }
+  .registration-screen .sampling-panel { padding: 15px; }
+  .sample-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-height: 760px) {

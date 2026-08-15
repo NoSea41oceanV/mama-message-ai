@@ -237,6 +237,12 @@ function samplingApiView(status, videoGeneration = status.videoGeneration) {
     configured: status.configured === true,
     active: status.active === true,
     subjectLabel: status.subjectLabel ?? null,
+    speakingStyle: status.speakingStyle ?? {
+      selfReference: status.subjectLabel ?? "",
+      favoriteEndings: [],
+      favoritePhrases: [],
+      replyExamples: [],
+    },
     favoriteTopics: [...(status.favoriteTopics ?? [])],
     childName: status.childName ?? "",
     speechRate: status.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
@@ -751,6 +757,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     history: conversationHistory,
     favoriteTopics: registeredSample?.favoriteTopics ?? [],
     childName: registeredSample?.childName ?? "",
+    speakingStyle: registeredSample?.speakingStyle ?? null,
   });
   const routedDecision = routed.decision;
   if (!routed.ok || !routedDecision || routedDecision.safetyLevel !== "normal") {
@@ -1326,7 +1333,7 @@ async function apiHandler(req, res, url, runtime = {}) {
         sendJson(res, 409, { error: "SAMPLING_NOT_REGISTERED" });
         return true;
       }
-      const input = await readJson(req, 15 * 1024 * 1024);
+      const input = await readJson(req, 30 * 1024 * 1024);
       const validationInput = {
         ...input,
         photoBase64: currentSample.photo.bytes.toString("base64"),
@@ -1429,7 +1436,7 @@ async function apiHandler(req, res, url, runtime = {}) {
         return true;
       }
       try {
-        const input = await readJson(req, 20 * 1024 * 1024);
+        const input = await readJson(req, 30 * 1024 * 1024);
         const validationStore = createGuardianSamplingStore();
         let clonedVoice = null;
         let validatedSample;

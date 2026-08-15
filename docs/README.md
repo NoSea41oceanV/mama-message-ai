@@ -8,6 +8,7 @@ GitHubには、実装・レビュー・提出準備に必要なテキスト資�
 - [開発チェックリスト](hackathon-build/checklist.md)
 - [開発記録](hackathon-build/build-notes.md)
 - [実装変更一覧](IMPLEMENTATION_CHANGES.md)
+- [1アカウント1顔の月額原価と売価試算](COST_MODEL.md)
 
 ## チーム運用
 

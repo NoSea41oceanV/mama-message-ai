@@ -25,6 +25,7 @@
 - [開発チェックリスト](docs/hackathon-build/checklist.md)
 - [3人チーム開発進行ガイド](docs/team/TEAM_WORKFLOW.md)
 - [実装変更一覧](docs/IMPLEMENTATION_CHANGES.md)
+- [1アカウント1顔の月額原価と売価試算](docs/COST_MODEL.md)
 
 ## 提出期限
 

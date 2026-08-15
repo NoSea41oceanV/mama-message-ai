@@ -361,8 +361,8 @@ function shortConversationTopic(value, maximumLength = 28) {
 
 function presentCaregiverLabel(value) {
   if (/(パパ|お父さん|父さん)/.test(value)) return "パパ";
-  if (/(先生|保育園|幼稚園|こども園|延長保育)/.test(value)) return "先生";
-  if (/(ベビーシッター|シッター)/.test(value)) return "シッターさん";
+  if (/(先生|せんせい|保育園|ほいくえん|幼稚園|ようちえん|こども園|延長保育)/.test(value)) return "先生";
+  if (/(ベビーシッター|シッター|べびーしったー|しったー)/.test(value)) return "シッターさん";
   return "いま一緒にいる人";
 }
 

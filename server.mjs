@@ -3,20 +3,30 @@ import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import {
+  GUARDIAN_SAMPLING_LIMITS,
   GuardianSamplingError,
+  createGuardianSamplingStore,
+  normalizeChildName,
+  normalizeFavoriteTopics,
 } from "./lib/guardian-sampling.mjs";
 import {
   GUARDIAN_PROFILE_ID_PATTERN,
   createPersistentGuardianSamplingStore,
 } from "./lib/persistent-guardian-sampling.mjs";
-import { createGuardianVideoService } from "./lib/guardian-video-service.mjs";
+import { createGuardianVideoService, downloadGeneratedVideo } from "./lib/guardian-video-service.mjs";
 import { createDidVideoProvider } from "./lib/providers/did-video.mjs";
+import { createElevenLabsProvider, ElevenLabsError } from "./lib/providers/elevenlabs.mjs";
+import { createHeyGenVideoProvider } from "./lib/providers/heygen-video.mjs";
 import { createKlingVideoProvider } from "./lib/providers/kling-video.mjs";
+import { createLiveAvatarProvider, LiveAvatarProviderError } from "./lib/providers/liveavatar.mjs";
 import { createMediaProvider, MediaProviderError } from "./lib/providers/media.mjs";
 import { createOrcaRouterProvider } from "./lib/providers/orcarouter.mjs";
 import { createSttProvider, SttProviderError } from "./lib/providers/stt.mjs";
+import { createTavusProvider, TavusProviderError } from "./lib/providers/tavus.mjs";
+import { createTavusTrainingAssetStore } from "./lib/tavus-training-assets.mjs";
+import { isChildHiragana, toChildHiragana } from "./lib/japanese-text.mjs";
 import { createOpenAICustomVoiceService } from "./lib/providers/openai-custom-voice.mjs";
 import { createElevenLabsVoiceService } from "./lib/providers/elevenlabs-voice.mjs";
 
@@ -40,14 +50,19 @@ const root = fileURLToPath(new URL("./public", import.meta.url));
 const responses = new Map();
 const idempotency = new Map();
 const conversations = new Map();
+const guardianPairings = new Map();
 const technicalLogs = [];
+const generatedReplyAudio = new Map();
+const generatedReplyVideo = new Map();
+const tavusConversations = new Map();
 const configuredRetentionHours = Number(process.env.TECHNICAL_LOG_TTL_HOURS || 24);
 const retentionMs = (Number.isFinite(configuredRetentionHours) ? Math.max(1, configuredRetentionHours) : 24) * 60 * 60 * 1000;
-const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 30);
+const configuredConversationTtlMinutes = Number(process.env.CONVERSATION_TTL_MINUTES || 120);
 const conversationTtlMs = (Number.isFinite(configuredConversationTtlMinutes)
   ? Math.max(1, configuredConversationTtlMinutes)
-  : 30) * 60 * 1000;
-const MAX_CONVERSATION_TURNS = 6;
+  : 120) * 60 * 1000;
+const MAX_CONVERSATION_TURNS = 12;
+const guardianPairingTtlMs = 10 * 60 * 1000;
 const routerMode = String(process.env.ROUTER_PROVIDER || "demo").toLowerCase();
 const sttMode = String(process.env.STT_PROVIDER || "demo").toLowerCase();
 const speechMode = String(process.env.SPEECH_PROVIDER || "disabled").toLowerCase();
@@ -62,9 +77,36 @@ const videoRequestTimeoutMs = Number(
     || process.env.KLING_VIDEO_REQUEST_TIMEOUT_SECONDS
     || 30,
 ) * 1000;
+const liveAvatarProvider = createLiveAvatarProvider();
+const tavusTrainingAssets = createTavusTrainingAssetStore({
+  publicBaseUrl: process.env.TAVUS_PUBLIC_BASE_URL,
+  ttlMs: Number(process.env.TAVUS_TRAINING_ASSET_TTL_SECONDS || 1800) * 1000,
+});
+const tavusProvider = createTavusProvider({
+  publishImage: tavusTrainingAssets.configured ? tavusTrainingAssets.publish : null,
+  deletePublishedImage: tavusTrainingAssets.deleteAsset,
+});
+const liveAvatarBatchPlaceholder = Object.freeze({
+  name: "liveavatar",
+  available: false,
+  async createTask() {
+    const error = new Error("LiveAvatar does not use batch avatar preparation");
+    error.code = "LIVEAVATAR_REALTIME_ONLY";
+    throw error;
+  },
+  async getTask() { return { status: "failed", videoUrl: null }; },
+  async deleteTask() { return false; },
+  async deleteAsset() { return false; },
+});
 const videoProvider = videoGenerationMode === "did"
   ? createDidVideoProvider({ timeoutMs: videoRequestTimeoutMs })
-  : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
+  : videoGenerationMode === "heygen"
+    ? createHeyGenVideoProvider({ timeoutMs: videoRequestTimeoutMs })
+    : videoGenerationMode === "liveavatar"
+      ? liveAvatarBatchPlaceholder
+      : videoGenerationMode === "tavus"
+        ? tavusProvider
+      : createKlingVideoProvider({ timeoutMs: videoRequestTimeoutMs });
 const guardianVideoService = createGuardianVideoService({
   samplingStore: guardianSampling,
   provider: videoProvider,
@@ -73,6 +115,8 @@ const guardianVideoService = createGuardianVideoService({
   maximumBytes: Number(process.env.VIDEO_MAX_BYTES || process.env.KLING_VIDEO_MAX_BYTES || 25 * 1024 * 1024),
   downloadTimeoutMs: Number(process.env.VIDEO_DOWNLOAD_TIMEOUT_SECONDS || process.env.KLING_VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
 });
+const voiceCloningMode = String(process.env.VOICE_CLONING_PROVIDER || "disabled").trim().toLowerCase();
+const voiceCloningProvider = createElevenLabsProvider({ provider: voiceCloningMode });
 const customVoiceService = createOpenAICustomVoiceService();
 const elevenLabsVoiceService = createElevenLabsVoiceService();
 
@@ -91,7 +135,6 @@ function configuredSpeechService(runtime = {}) {
   }
   return { service: null, profileId: "" };
 }
-const guardianSamplingRecordingText = "お話ししてくれてありがとう。いつも応援しているよ。";
 const demoConsentByProfile = new Map();
 
 const demoConsent = {
@@ -137,9 +180,40 @@ function sendPrivateMedia(res, media) {
   res.end(media.bytes);
 }
 
+function sendTavusTrainingAsset(res, media) {
+  res.writeHead(200, {
+    "content-type": media.mimeType,
+    "content-length": media.bytes.length,
+    "cache-control": "no-store, max-age=0",
+    "cross-origin-resource-policy": "cross-origin",
+    ...securityHeaders(),
+  });
+  res.end(media.bytes);
+}
+
+function storeGeneratedReplyAudio(media) {
+  const accessToken = randomUUID();
+  generatedReplyAudio.set(accessToken, {
+    bytes: media.bytes,
+    mimeType: media.mimeType,
+    createdAt: Date.now(),
+  });
+  return `/api/generated-audio/${encodeURIComponent(accessToken)}`;
+}
+
+function storeGeneratedReplyVideo(media) {
+  const accessToken = randomUUID();
+  generatedReplyVideo.set(accessToken, {
+    bytes: media.bytes,
+    mimeType: media.mimeType,
+    createdAt: Date.now(),
+  });
+  return `/api/generated-video/${encodeURIComponent(accessToken)}`;
+}
+
 function securityHeaders() {
   return {
-    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' https://api.liveavatar.com wss://api.liveavatar.com wss://webrtc-signaling.heygen.io wss://*.livekit.cloud https://*.livekit.cloud https://*.daily.co wss://*.daily.co; frame-src https://*.daily.co; worker-src 'self' blob:; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     "permissions-policy": "camera=(), geolocation=(), payment=(), usb=()",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
@@ -158,11 +232,14 @@ async function readJson(req, maximumBytes = 8 * 1024 * 1024) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function samplingApiView(status) {
+function samplingApiView(status, videoGeneration = status.videoGeneration) {
   return {
     configured: status.configured === true,
     active: status.active === true,
     subjectLabel: status.subjectLabel ?? null,
+    favoriteTopics: [...(status.favoriteTopics ?? [])],
+    childName: status.childName ?? "",
+    speechRate: status.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
     faceApproved: status.faceApproved === true,
     voiceApproved: status.voiceApproved === true,
     posterUrl: status.posterUrl ?? null,
@@ -171,7 +248,9 @@ function samplingApiView(status) {
     avatarAssetId: status.avatarAssetId ?? null,
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
     voiceCloningAvailable: status.voiceCloningAvailable === true,
-    videoGeneration: status.videoGeneration ?? { status: "not_started" },
+    videoGeneration: videoGeneration ?? { status: "not_started" },
+    liveAvatar: videoGenerationMode === "liveavatar" ? liveAvatarProvider.status() : null,
+    tavus: videoGenerationMode === "tavus" ? tavusProvider.status() : null,
   };
 }
 
@@ -187,7 +266,7 @@ function customConsentView(status = guardianSampling.status()) {
     posterUrl: status.posterUrl,
     voicePreviewUrl: status.voicePreviewUrl,
     voiceSamplePurpose: status.voicePreviewUrl ? "sampling-confirmation" : null,
-    voiceCloningAvailable: false,
+    voiceCloningAvailable: status.voiceCloningAvailable === true,
     source: "custom-sampling",
   };
 }
@@ -234,7 +313,7 @@ export function classifyTranscript(transcript) {
   }
 
   const urgent = /(死にたい|消えたい|息ができない|火事|血が止まらない|今すぐ助けて|毒を飲んだ|意識がない)/;
-  const adultRequired = /(助けて|叩かれ|殴られ|蹴られ|触られ|痛い|けが|怖い人|帰れない|迷子|ひとりぼっち|知らない人)/;
+  const adultRequired = /(叩かれ|殴られ|蹴られ|無理やり触られ|体を触られ|けがをした|血が出て|怖い人|帰れない|迷子|知らない人(?:が|に).*(?:ついて|追いかけ|連れて)|(?:怖い|危ない|閉じ込め|追いかけ).{0,16}助けて|助けて.{0,16}(?:怖い|危ない|閉じ込め|追いかけ))/;
   if (urgent.test(value)) {
     return { safetyLevel: "urgent", supportMode: "adult_handoff", emotion: ["fear"], reasonCodes: ["URGENT_LANGUAGE"] };
   }
@@ -274,8 +353,59 @@ function shortConversationTopic(value, maximumLength = 28) {
     : `${normalized.slice(0, maximumLength)}…`;
 }
 
-export function buildReply(decision, transcript = "", history = []) {
+function presentCaregiverLabel(value) {
+  if (/(パパ|お父さん|父さん)/.test(value)) return "パパ";
+  if (/(先生|保育園|幼稚園|こども園|延長保育)/.test(value)) return "先生";
+  if (/(ベビーシッター|シッター)/.test(value)) return "シッターさん";
+  return "いま一緒にいる人";
+}
+
+function childNamePrefix(childName) {
+  const normalized = normalizeChildName(childName);
+  return normalized ? `${normalized}、` : "";
+}
+
+export function buildSeparationReply(transcript = "", favoriteTopics = [], childName = "") {
+  const value = shortConversationTopic(transcript, 80);
+  if (!value) return null;
+  const caregiver = presentCaregiverLabel(value);
+  const favorite = normalizeFavoriteTopics(favoriteTopics)[0] ?? null;
+  const childCall = childNamePrefix(childName);
+  if (/(?:お迎え|ママ|お母さん).*(?:まだ|いつ|来る)|(?:まだ|いつ).*(?:お迎え|ママ|お母さん)/.test(value)) {
+    return favorite
+      ? `${childCall}お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、${favorite}のお話をしながら待とうね。`
+      : `${childCall}お迎えを待つの、長く感じるよね。${caregiver}に時間を聞いて、待つあいだ何をするか一緒に決めようね。`;
+  }
+  if (/(?:ママ|お母さん).*(?:どこ|何してる)/.test(value)) {
+    return `${childCall}ママのことが気になったんだね。${caregiver}に、お迎えのことを聞いてみようね。`;
+  }
+  const separationDistress = /(?:ママ|お母さん).*(?:会いたい|いな(?:い|く)|来て|さみしい|寂しい)|(?:会いたい|さみしい|寂しい).*(?:ママ|お母さん)/;
+  if (separationDistress.test(value) && /(泣|涙)/.test(value)) {
+    return favorite
+      ? `${childCall}泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
+      : `${childCall}泣いても大丈夫だよ。ママに会いたくなったんだね。${caregiver}のそばで、ゆっくり三つ数えてみようね。`;
+  }
+  if (separationDistress.test(value)) {
+    return favorite
+      ? `${childCall}ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、${favorite}のお話をしながら待とうね。`
+      : `${childCall}ママに会いたくなったんだね。寂しいよね。${caregiver}のそばで、いっしょに待とうね。`;
+  }
+  return null;
+}
+
+export function buildReply(decision, transcript = "", history = [], favoriteTopics = [], childName = "") {
   const currentTopic = shortConversationTopic(transcript);
+  const separationReply = buildSeparationReply(transcript, favoriteTopics, childName);
+  if (separationReply) return separationReply;
+  if (/(元気|げんき)[？?。！!]*$/.test(currentTopic)) {
+    return "うん、元気だよ！今日は何してたの？";
+  }
+  if (/(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)) {
+    return "少しならお話できるよ。どうしたの？";
+  }
+  if (/(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)) {
+    return "もちろん。一緒に見てみよう。どの問題で困ってる？";
+  }
   const priorMessage = Array.isArray(history)
     ? [...history].reverse().find((message) => message?.role === "user" && String(message.content ?? "").trim())
     : null;
@@ -295,6 +425,24 @@ export function buildReply(decision, transcript = "", history = []) {
     clarify: "うまく聞き取れなかったよ。そばの大人と、もう一度お話してみようね。",
   };
   return replies[decision.supportMode] ?? replies.listen;
+}
+
+export function refineGuardianReply(decision, transcript = "", history = [], favoriteTopics = [], childName = "") {
+  if (!decision || decision.safetyLevel !== "normal") return decision;
+  const currentTopic = shortConversationTopic(transcript);
+  const fixedDailyReply = buildSeparationReply(transcript, favoriteTopics, childName) ?? ((
+    /(元気|げんき)[？?。！!]*$/.test(currentTopic)
+    || /(今日|きょう).*(暇|ひま)|(?:暇|ひま).*(今日|きょう)/.test(currentTopic)
+    || /(宿題|しゅくだい).*(助けて|手伝って|わからない)/.test(currentTopic)
+  ) ? buildReply(decision, transcript, history, favoriteTopics, childName) : null);
+  const soundsLikeCounselingBot = /(きみはどう|今日はどんな(?:気持ち|気分)|今どんな(?:気持ち|気分)|お話ししてくれてありがとう)/.test(
+    String(decision.replyText ?? ""),
+  );
+  if (!fixedDailyReply && !soundsLikeCounselingBot) return decision;
+  return Object.freeze({
+    ...decision,
+    replyText: fixedDailyReply ?? buildReply(decision, transcript, history, favoriteTopics, childName),
+  });
 }
 
 export function replyIsAllowed(replyText) {
@@ -329,13 +477,22 @@ const demoReplyVideoUrls = Object.freeze({
   clarify: "/assets/video/clarify.webm",
 });
 const storedGeneratedVideoProvider = Object.freeze({
-  name: "stored-kling-video",
-  generate: async (context) => context.generatedVideoUrl ? {
-    videoUrl: context.generatedVideoUrl,
-    audioInVideo: false,
-    audioUrl: context.replyAudioUrl ?? null,
-    speechSynthesis: !context.replyAudioUrl,
-  } : null,
+  name: "guardian-reply-video",
+  generate: async (context) => context.generatedReplyVideoUrl
+    ? {
+        videoUrl: context.generatedReplyVideoUrl,
+        audioInVideo: true,
+        audioUrl: null,
+        speechSynthesis: false,
+      }
+    : context.generatedVideoUrl
+      ? {
+          videoUrl: context.generatedVideoUrl,
+          audioInVideo: false,
+          audioUrl: context.audioUrl || null,
+          speechSynthesis: !context.audioUrl,
+        }
+      : null,
 });
 const mediaProvider = createMediaProvider({
   generatedVideoProvider: storedGeneratedVideoProvider,
@@ -376,6 +533,25 @@ function addTechnicalLog(entry) {
   technicalLogs.length = Math.min(technicalLogs.length, 50);
 }
 
+function safeExternalFailureReason(error, fallback) {
+  const code = typeof error?.code === "string" && /^[A-Z0-9_]{1,80}$/.test(error.code)
+    ? error.code
+    : fallback;
+  const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599
+    ? `:HTTP_${error.status}`
+    : "";
+  const providerCode = typeof error?.providerCode === "string" && /^[a-z0-9_.:-]{1,80}$/i.test(error.providerCode)
+    ? `:${error.providerCode}`
+    : "";
+  const providerDetail = typeof error?.providerDetail === "string" && error.providerDetail.length <= 240
+    ? `:${error.providerDetail}`
+    : "";
+  const providerParam = typeof error?.providerParam === "string" && /^[a-z0-9_.:[\]-]{1,120}$/i.test(error.providerParam)
+    ? `:PARAM_${error.providerParam}`
+    : "";
+  return `${code}${status}${providerCode}${providerDetail}${providerParam}`;
+}
+
 function conversationStorageKey(guardianProfileId, conversationId) {
   return `${guardianProfileId || "legacy"}:${conversationId}`;
 }
@@ -393,13 +569,19 @@ function readConversationHistory(guardianProfileId, conversationId, now = Date.n
   ]);
 }
 
-function rememberConversationTurn(guardianProfileId, conversationId, childMessage, guardianReply, now = Date.now()) {
+function rememberConversationTurn(guardianProfileId, conversationId, childMessage, guardianReply, details = {}, now = Date.now()) {
   const key = conversationStorageKey(guardianProfileId, conversationId);
   const previous = conversations.get(key);
   const turns = previous && now - previous.updatedAt <= conversationTtlMs
     ? [...previous.turns]
     : [];
-  turns.push({ childMessage, guardianReply, at: new Date(now).toISOString() });
+  turns.push({
+    childMessage,
+    guardianReply,
+    at: new Date(now).toISOString(),
+    safetyHandoff: details.safetyHandoff === true,
+    mediaUrl: typeof details.mediaUrl === "string" ? details.mediaUrl : null,
+  });
   conversations.set(key, {
     guardianProfileId,
     conversationId,
@@ -420,6 +602,40 @@ function guardianConversationView(guardianProfileId, now = Date.now()) {
     }));
 }
 
+function normalizeGuardianPairingCode(value) {
+  const code = String(value ?? "").replace(/\D/g, "");
+  return /^\d{6}$/.test(code) ? code : null;
+}
+
+function createGuardianPairing(guardianProfileId, now = Date.now()) {
+  for (const [code, pairing] of guardianPairings) {
+    if (pairing.guardianProfileId === guardianProfileId || pairing.expiresAt <= now) {
+      guardianPairings.delete(code);
+    }
+  }
+  let code;
+  do code = String(randomInt(100000, 1000000));
+  while (guardianPairings.has(code));
+  const pairing = {
+    guardianProfileId,
+    createdAt: now,
+    expiresAt: now + guardianPairingTtlMs,
+  };
+  guardianPairings.set(code, pairing);
+  return { code, expiresAt: new Date(pairing.expiresAt).toISOString(), ttlMinutes: 10 };
+}
+
+function resolveGuardianPairing(value, now = Date.now()) {
+  const code = normalizeGuardianPairingCode(value);
+  if (!code) return null;
+  const pairing = guardianPairings.get(code);
+  if (!pairing || pairing.expiresAt <= now) {
+    guardianPairings.delete(code);
+    return null;
+  }
+  return pairing.guardianProfileId;
+}
+
 function purgeExpiredData(now = Date.now()) {
   const oldestAllowed = now - retentionMs;
   for (const [requestId, record] of responses) {
@@ -434,6 +650,33 @@ function purgeExpiredData(now = Date.now()) {
   for (const [key, conversation] of conversations) {
     if (now - conversation.updatedAt > conversationTtlMs) conversations.delete(key);
   }
+  for (const [code, pairing] of guardianPairings) {
+    if (pairing.expiresAt <= now) guardianPairings.delete(code);
+  }
+  for (const [accessToken, audio] of generatedReplyAudio) {
+    if (now - audio.createdAt > retentionMs) {
+      audio.bytes.fill(0);
+      generatedReplyAudio.delete(accessToken);
+    }
+  }
+  for (const [accessToken, video] of generatedReplyVideo) {
+    if (now - video.createdAt > retentionMs) {
+      video.bytes.fill(0);
+      generatedReplyVideo.delete(accessToken);
+    }
+  }
+  tavusTrainingAssets.purge();
+  for (const [conversationId, conversation] of tavusConversations) {
+    if (now - conversation.createdAt > conversationTtlMs) tavusConversations.delete(conversationId);
+  }
+}
+
+async function endTavusConversationsForProfile(profileId, provider = tavusProvider) {
+  for (const [conversationId, conversation] of tavusConversations) {
+    if (conversation.profileId !== profileId) continue;
+    await provider.endConversation(conversationId);
+    tavusConversations.delete(conversationId);
+  }
 }
 
 function createAdultHandoff(current, decision, adultMessage) {
@@ -443,6 +686,7 @@ function createAdultHandoff(current, decision, adultMessage) {
       current.conversationId,
       current.confirmedTranscript,
       adultMessage,
+      { safetyHandoff: true },
     );
   }
   return {
@@ -500,6 +744,9 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   const registeredSample = input.guardianProfileId
     ? guardianSampling.resolve(input.guardianProfileId, input.consentId, input.avatarAssetId)
     : null;
+  const registeredStatus = registeredSample && input.guardianProfileId
+    ? guardianSampling.status(input.guardianProfileId)
+    : null;
   const effectiveDemoConsent = profileDemoConsent(input.guardianProfileId);
   const demoConsentOk = input.consentId === demoConsent.consentId
     && input.avatarAssetId === demoConsent.avatarAssetId
@@ -523,10 +770,12 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
   const routed = await routerProvider.classifyAndReply({
     transcript: input.confirmedTranscript,
     history: conversationHistory,
+    favoriteTopics: registeredSample?.favoriteTopics ?? [],
+    childName: registeredSample?.childName ?? "",
   });
-  const decision = routed.decision;
-  if (!routed.ok || !decision || decision.safetyLevel !== "normal") {
-    const safeDecision = decision ?? {
+  const routedDecision = routed.decision;
+  if (!routed.ok || !routedDecision || routedDecision.safetyLevel !== "normal") {
+    const safeDecision = routedDecision ?? {
       safetyLevel: "uncertain",
       supportMode: "adult_handoff",
       emotion: ["unknown"],
@@ -550,6 +799,25 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     return;
   }
 
+  const refinedDecision = refineGuardianReply(
+    routedDecision,
+    input.confirmedTranscript,
+    conversationHistory,
+    registeredSample?.favoriteTopics ?? [],
+    registeredSample?.childName ?? "",
+  );
+
+  const convertedReply = await toChildHiragana(refinedDecision.replyText);
+  const fallbackReply = isChildHiragana(convertedReply)
+    ? convertedReply
+    : await toChildHiragana(buildReply(precheck, input.confirmedTranscript, conversationHistory));
+  const decision = Object.freeze({
+    ...refinedDecision,
+    replyText: isChildHiragana(fallbackReply)
+      ? fallbackReply
+      : "だいじょうぶだよ。いまいっしょにいるおとなと、いっしょにまとうね。",
+  });
+
   if (!replyIsAllowed(decision.replyText)) {
     const result = createAdultHandoff(
       current,
@@ -568,21 +836,80 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     return;
   }
 
+  const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
+  const activeVideoService = runtime.videoService ?? guardianVideoService;
+  const activeLiveAvatarProvider = runtime.liveAvatarProvider ?? liveAvatarProvider;
+  const activeTavusProvider = runtime.tavusProvider ?? tavusProvider;
+  const activeReplyVideoProvider = runtime.replyVideoProvider
+    ?? (videoProvider.name === "heygen" ? videoProvider : null);
+  let clonedReplyAudio = null;
+  let clonedReplyAudioUrl = null;
+  let voiceFailureReason = null;
+  if (registeredSample?.voiceClone?.provider === "elevenlabs" && registeredSample.voiceClone.voiceId) {
+    try {
+      clonedReplyAudio = await activeVoiceProvider.synthesize({
+        voiceId: registeredSample.voiceClone.voiceId,
+        text: decision.replyText,
+        speed: registeredSample.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
+      });
+      clonedReplyAudioUrl = storeGeneratedReplyAudio(clonedReplyAudio);
+    } catch (error) {
+      voiceFailureReason = error instanceof ElevenLabsError ? error.code : "VOICE_CLONE_TTS_FAILED";
+    }
+  }
+
   let responseBundle;
+  let videoFailureReason = null;
   try {
-    const generatedVideo = registeredSample
-      ? runtime.videoService?.profileStatus?.(input.guardianProfileId)
+    const generatedVideo = registeredSample && !["liveavatar", "tavus"].includes(videoGenerationMode)
+      ? activeVideoService.profileStatus?.(input.guardianProfileId)
         ?? guardianSampling.status(input.guardianProfileId).videoGeneration
       : null;
     const generatedVideoUrl = generatedVideo?.status === "ready" ? generatedVideo.videoUrl : null;
+    let generatedReplyVideoUrl = null;
+    const providerAvatarId = registeredSample
+      ? activeVideoService.profileProviderTaskId?.(input.guardianProfileId)
+      : null;
+    const providerImageAssetId = registeredSample
+      ? activeVideoService.profileProviderAssetId?.(input.guardianProfileId)
+      : null;
+    if (
+      providerAvatarId
+      && clonedReplyAudio?.bytes
+      && activeReplyVideoProvider?.available !== false
+      && typeof activeReplyVideoProvider?.renderReply === "function"
+    ) {
+      let replyTask = null;
+      try {
+        replyTask = await activeReplyVideoProvider.renderReply({
+          avatarId: providerAvatarId,
+          imageAssetId: providerImageAssetId,
+          audioBytes: clonedReplyAudio.bytes,
+          audioMimeType: clonedReplyAudio.mimeType,
+          decision,
+          idempotencyKey: requestId,
+        });
+        const replyVideo = await (runtime.videoDownloader ?? downloadGeneratedVideo)(replyTask.videoUrl, {
+          maximumBytes: Number(process.env.VIDEO_MAX_BYTES || 25 * 1024 * 1024),
+          timeoutMs: Number(process.env.VIDEO_DOWNLOAD_TIMEOUT_SECONDS || 30) * 1000,
+        });
+        generatedReplyVideoUrl = storeGeneratedReplyVideo(replyVideo);
+      } catch (error) {
+        videoFailureReason = safeExternalFailureReason(error, "HEYGEN_REPLY_VIDEO_FAILED");
+      } finally {
+        if (replyTask?.taskId && typeof activeReplyVideoProvider.deleteReplyTask === "function") {
+          await activeReplyVideoProvider.deleteReplyTask(replyTask.taskId).catch(() => {});
+        }
+      }
+    }
     const defaultFault = registeredSample
-      ? generatedVideoUrl ? "none" : "video_failure"
+      ? generatedReplyVideoUrl || generatedVideoUrl ? "none" : "video_failure"
       : routerMode === "demo" || process.env.PREGENERATED_VIDEO_URL
       ? "generated_video_failure"
       : "video_failure";
     let replyAudio = null;
     const configuredSpeech = configuredSpeechService(runtime);
-    const storedVoiceClone = input.guardianProfileId ? guardianSampling.voiceClone(input.guardianProfileId) : null;
+    const storedVoiceClone = registeredSample?.voiceClone ?? null;
     const speechProfileMatches = speechMode === "elevenlabs" && storedVoiceClone
       ? storedVoiceClone.provider === "elevenlabs"
       : configuredSpeech.profileId === input.guardianProfileId;
@@ -605,20 +932,27 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       replyText: decision.replyText,
       consentValid: true,
       faultMode: input.demoFault || defaultFault,
+      generatedReplyVideoUrl,
       generatedVideoUrl,
       replyAudioUrl: replyAudio?.audioUrl,
-      posterUrl: registeredSample?.photoUrl,
-      audioUrl: replyAudio?.audioUrl ?? registeredSample?.voicePreviewUrl,
-      recordedAudioText: replyAudio ? decision.replyText : registeredSample ? guardianSamplingRecordingText : null,
+      posterUrl: registeredStatus?.posterUrl,
+      audioUrl: clonedReplyAudioUrl,
+      recordedAudioText: clonedReplyAudioUrl ? decision.replyText : null,
       guardianSampling: registeredSample ? {
         configured: true,
         photoUsed: true,
         voiceSampleRegistered: true,
-        voiceSamplePurpose: replyAudio ? "custom-voice-source" : "sampling-confirmation",
-        voiceUsed: Boolean(replyAudio),
-        voiceCloningUsed: Boolean(replyAudio),
-        voiceProvider: replyAudio?.provider ?? null,
-        voiceFallback: replyAudio ? null : "dynamic-tts",
+        voiceSampleMatchesReply: false,
+        voiceSamplePurpose: registeredSample.voiceClone?.voiceId
+          ? "voice-cloning-source"
+          : "sampling-confirmation",
+        voiceUsed: Boolean(clonedReplyAudioUrl),
+        voiceCloningUsed: Boolean(clonedReplyAudioUrl),
+        voiceFallback: clonedReplyAudioUrl
+          ? null
+          : registeredSample.voiceClone?.voiceId
+            ? voiceFailureReason || "browser-speech"
+            : "dynamic-tts",
       } : null,
     });
   } catch (error) {
@@ -629,7 +963,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     }
     responseBundle = await neutralMediaProvider.generate({
       decision,
-      replyText: "おへんじを準備できなかったよ。そばのおとなといっしょに、もう一度ためしてね。",
+      replyText: "おへんじをじゅんびできなかったよ。そばのおとなといっしょに、もういちどためしてね。",
       consentValid: true,
       faultMode: "media_unavailable",
     });
@@ -646,6 +980,30 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     replyText: responseBundle.parentLike
       ? decision.replyText
       : null,
+    conversationTurn: Math.floor(conversationHistory.length / 2) + 1,
+    speechRate: registeredSample?.speechRate ?? GUARDIAN_SAMPLING_LIMITS.defaultSpeechRate,
+    liveAvatar: Object.freeze({
+      ...activeLiveAvatarProvider.status(),
+      eligible: Boolean(
+        videoGenerationMode === "liveavatar"
+        && registeredSample
+        && clonedReplyAudioUrl
+        && activeLiveAvatarProvider.available
+      ),
+    }),
+    tavus: Object.freeze({
+      ...activeTavusProvider.status(),
+      eligible: Boolean(
+        videoGenerationMode === "tavus"
+        && registeredSample
+        && clonedReplyAudioUrl
+        && activeTavusProvider.streamingAvailable
+      ),
+      customFaceReady: Boolean(
+        videoGenerationMode === "tavus"
+        && activeVideoService.profileProviderTaskId?.(input.guardianProfileId)
+      ),
+    }),
     responseBundle,
     bundle: responseBundle,
     completedAt: new Date().toISOString(),
@@ -657,6 +1015,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
       input.conversationId,
       input.confirmedTranscript,
       decision.replyText,
+      { mediaUrl: responseBundle.audioUrl || responseBundle.videoUrl || null },
     );
   }
   addTechnicalLog({
@@ -667,6 +1026,7 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
     latencyMs: Date.now() - startedAt,
     status: result.status,
     fallbackLevel: responseBundle.fallbackLevel,
+    failureReason: voiceFailureReason || videoFailureReason,
     ...readUsage(routed.metadata),
   });
 }
@@ -674,6 +1034,9 @@ async function finishResponse(requestId, input, startedAt, runtime = {}) {
 async function apiHandler(req, res, url, runtime = {}) {
   purgeExpiredData();
   const videoService = runtime.videoService ?? guardianVideoService;
+  const activeVoiceProvider = runtime.voiceCloningProvider ?? voiceCloningProvider;
+  const activeLiveAvatarProvider = runtime.liveAvatarProvider ?? liveAvatarProvider;
+  const activeTavusProvider = runtime.tavusProvider ?? tavusProvider;
   const voiceService = configuredSpeechService(runtime).service;
   const replyAudioMatch = url.pathname.match(/^\/api\/reply-audio\/([^/]+)$/);
   if (req.method === "GET" && replyAudioMatch) {
@@ -685,6 +1048,173 @@ async function apiHandler(req, res, url, runtime = {}) {
       ?? null;
     if (!audio) sendJson(res, 404, { error: "NOT_FOUND" });
     else sendPrivateMedia(res, audio);
+    return true;
+  }
+  const tavusTrainingAssetMatch = url.pathname.match(/^\/api\/tavus\/training-assets\/([^/]+)$/);
+  if (req.method === "GET" && tavusTrainingAssetMatch) {
+    let assetId;
+    try {
+      assetId = decodeURIComponent(tavusTrainingAssetMatch[1]);
+    } catch {
+      assetId = "";
+    }
+    const media = assetId ? tavusTrainingAssets.read(assetId) : null;
+    if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendTavusTrainingAsset(res, media);
+    return true;
+  }
+  const generatedAudioMatch = url.pathname.match(/^\/api\/generated-audio\/([^/]+)$/);
+  if (req.method === "GET" && generatedAudioMatch) {
+    let accessToken;
+    try {
+      accessToken = decodeURIComponent(generatedAudioMatch[1]);
+    } catch {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    const media = generatedReplyAudio.get(accessToken);
+    if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendPrivateMedia(res, media);
+    return true;
+  }
+  const generatedVideoMatch = url.pathname.match(/^\/api\/generated-video\/([^/]+)$/);
+  if (req.method === "GET" && generatedVideoMatch) {
+    let accessToken;
+    try {
+      accessToken = decodeURIComponent(generatedVideoMatch[1]);
+    } catch {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    const media = generatedReplyVideo.get(accessToken);
+    if (!media) sendJson(res, 404, { error: "NOT_FOUND" });
+    else sendPrivateMedia(res, media);
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/liveavatar/session-token") {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 4 * 1024);
+      if (input.externalProcessingApproved !== true) {
+        sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
+        return true;
+      }
+      const sample = guardianSampling.resolve(profileId, input.consentId, input.avatarAssetId);
+      if (!sample) {
+        sendJson(res, 409, { error: "SAMPLING_NOT_REGISTERED" });
+        return true;
+      }
+      const session = await activeLiveAvatarProvider.createSessionToken();
+      sendJson(res, 201, {
+        sessionToken: session.sessionToken,
+        apiUrl: session.apiUrl,
+        maxSessionDuration: session.maxSessionDuration,
+        liveAvatar: activeLiveAvatarProvider.status(),
+      });
+    } catch (error) {
+      const statusCode = error instanceof LiveAvatarProviderError && error.status === 401 ? 401 : 503;
+      sendJson(res, statusCode, { error: error.code || "LIVEAVATAR_SESSION_FAILED" });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/tavus/conversation") {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 4 * 1024);
+      if (input.externalProcessingApproved !== true) {
+        sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
+        return true;
+      }
+      const sample = guardianSampling.resolve(profileId, input.consentId, input.avatarAssetId);
+      if (!sample) {
+        sendJson(res, 409, { error: "SAMPLING_NOT_REGISTERED" });
+        return true;
+      }
+      const customFaceId = videoService.profileProviderTaskId?.(profileId);
+      const conversation = await activeTavusProvider.createConversation({
+        faceId: customFaceId || activeTavusProvider.fallbackFaceId,
+      });
+      tavusConversations.set(conversation.conversationId, { profileId, createdAt: Date.now() });
+      sendJson(res, 201, {
+        conversationId: conversation.conversationId,
+        conversationUrl: conversation.conversationUrl,
+        meetingToken: conversation.meetingToken,
+        customFace: Boolean(customFaceId),
+        tavus: activeTavusProvider.status(),
+      });
+    } catch (error) {
+      const statusCode = error instanceof TavusProviderError
+        ? error.status === 401 ? 401 : error.status === 429 ? 429 : 503
+        : 503;
+      sendJson(res, statusCode, { error: error.code || "TAVUS_CONVERSATION_FAILED" });
+    }
+    return true;
+  }
+  const tavusEndMatch = url.pathname.match(/^\/api\/tavus\/conversations\/([^/]+)\/end$/);
+  if (req.method === "POST" && tavusEndMatch) {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    let conversationId;
+    try {
+      conversationId = decodeURIComponent(tavusEndMatch[1]).trim();
+    } catch {
+      conversationId = "";
+    }
+    const owned = tavusConversations.get(conversationId);
+    if (!owned || owned.profileId !== profileId) {
+      sendJson(res, 404, { error: "NOT_FOUND" });
+      return true;
+    }
+    try {
+      await activeTavusProvider.endConversation(conversationId);
+      tavusConversations.delete(conversationId);
+      sendJson(res, 200, { ended: true });
+    } catch (error) {
+      sendJson(res, 503, { error: error.code || "TAVUS_END_FAILED" });
+    }
     return true;
   }
   const samplingAssetMatch = url.pathname.match(/^\/api\/sampling\/assets\/(photo|voice|video)\/([^/]+)$/);
@@ -729,6 +1259,7 @@ async function apiHandler(req, res, url, runtime = {}) {
         sendJson(res, 422, { error: "EXTERNAL_PROCESSING_CONSENT_REQUIRED" });
         return true;
       }
+      await videoService.deleteRemote?.(profileId).catch(() => {});
       sendJson(res, 202, videoService.start(profileId));
     } catch (error) {
       sendJson(res, error.message === "PAYLOAD_TOO_LARGE" ? 413 : error.statusCode || 400, {
@@ -748,20 +1279,20 @@ async function apiHandler(req, res, url, runtime = {}) {
       return true;
     }
     const status = guardianSampling.status(profileId);
-    const clone = guardianSampling.voiceClone(profileId);
+    const clone = status.configured
+      ? guardianSampling.resolve(profileId, status.consentId, status.avatarAssetId)?.voiceClone
+      : null;
     if (!status.configured || !status.active || clone?.provider !== "elevenlabs") {
       sendJson(res, 404, { error: "VOICE_CLONE_NOT_FOUND" });
       return true;
     }
     try {
-      const preview = await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).synthesize({
+      const preview = await activeVoiceProvider.synthesize({
         voiceId: clone.voiceId,
         text: "お話ししてくれてありがとう。いつでも応援しているよ。",
-        safetyLevel: "normal",
-        consentValid: true,
       });
       if (!preview) sendJson(res, 502, { error: "VOICE_CLONE_PREVIEW_FAILED" });
-      else sendJson(res, 200, { audioUrl: preview.audioUrl, cached: preview.cacheHit });
+      else sendJson(res, 200, { audioUrl: storeGeneratedReplyAudio(preview), cached: false });
     } catch {
       sendJson(res, 502, { error: "VOICE_CLONE_PREVIEW_FAILED" });
     }
@@ -789,6 +1320,113 @@ async function apiHandler(req, res, url, runtime = {}) {
     sendJson(res, status ? 200 : 404, status ?? { error: "NOT_FOUND" });
     return true;
   }
+  if (req.method === "POST" && url.pathname === "/api/sampling/voice") {
+    const profileId = readGuardianProfileId(req);
+    if (profileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+      sendJson(res, 415, { error: "CONTENT_TYPE_UNSUPPORTED" });
+      return true;
+    }
+    try {
+      const currentStatus = guardianSampling.status(profileId);
+      const currentSample = currentStatus.configured
+        ? guardianSampling.resolve(profileId, currentStatus.consentId, currentStatus.avatarAssetId)
+        : null;
+      if (!currentSample) {
+        sendJson(res, 409, { error: "SAMPLING_NOT_REGISTERED" });
+        return true;
+      }
+      const input = await readJson(req, 15 * 1024 * 1024);
+      const validationInput = {
+        ...input,
+        photoBase64: currentSample.photo.bytes.toString("base64"),
+        photoType: currentSample.photo.mimeType,
+        faceApproved: true,
+      };
+      const validationStore = createGuardianSamplingStore();
+      let clonedVoice = null;
+      try {
+        const validationStatus = validationStore.register(validationInput);
+        const validated = validationStore.resolve(validationStatus.consentId, validationStatus.avatarAssetId);
+        if (activeVoiceProvider.name === "elevenlabs") {
+          if (!activeVoiceProvider.available) {
+            throw new ElevenLabsError("ELEVENLABS_NOT_CONFIGURED", "ElevenLabs is not configured");
+          }
+          clonedVoice = await activeVoiceProvider.cloneVoice({
+            bytes: validated.voice.bytes,
+            mimeType: validated.voice.mimeType,
+            name: `Mama Message ${profileId.slice(0, 8)}`,
+          });
+        }
+      } finally {
+        validationStore.delete();
+      }
+      let updated;
+      try {
+        updated = guardianSampling.replaceVoice(profileId, input, { voiceClone: clonedVoice });
+      } catch (error) {
+        if (clonedVoice?.voiceId) await activeVoiceProvider.deleteVoice(clonedVoice.voiceId).catch(() => {});
+        throw error;
+      }
+      if (currentSample.voiceClone?.voiceId && currentSample.voiceClone.voiceId !== clonedVoice?.voiceId) {
+        await activeVoiceProvider.deleteVoice(currentSample.voiceClone.voiceId).catch(() => {});
+      }
+      sendJson(res, 200, samplingApiView(updated, videoService.profileStatus?.(profileId)));
+    } catch (error) {
+      const statusCode = error.message === "PAYLOAD_TOO_LARGE"
+        ? 413
+        : error instanceof ElevenLabsError
+          ? error.status === 401 ? 401 : error.status === 429 ? 429 : 502
+          : error instanceof GuardianSamplingError
+            ? error.statusCode
+            : 400;
+      sendJson(res, statusCode, {
+        error: error.code || "VOICE_SAMPLING_REQUEST_INVALID",
+        message: error instanceof ElevenLabsError
+          ? "ElevenLabsで声を作れませんでした。APIキー、利用枠、録音内容を確認してください。"
+          : undefined,
+      });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/sampling/preferences") {
+    const profileId = readGuardianProfileId(req);
+    if (!profileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_REQUIRED" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    try {
+      const input = await readJson(req, 16 * 1024);
+      guardianSampling.updatePreferences(profileId, input);
+      sendJson(res, 200, samplingApiView(
+        guardianSampling.status(profileId),
+        videoService.profileStatus?.(profileId),
+      ));
+    } catch (error) {
+      sendJson(res, error instanceof GuardianSamplingError ? error.statusCode : 400, {
+        error: error.code || "PREFERENCES_REQUEST_INVALID",
+        message: error instanceof GuardianSamplingError
+          ? "先に保護者の写真と声を登録してください。"
+          : "好きなものを保存できませんでした。",
+      });
+    }
+    return true;
+  }
   if (url.pathname === "/api/sampling") {
     const profileId = readGuardianProfileId(req);
     if (!profileId) {
@@ -796,10 +1434,10 @@ async function apiHandler(req, res, url, runtime = {}) {
       return true;
     }
     if (req.method === "GET") {
-      sendJson(res, 200, samplingApiView({
-        ...guardianSampling.status(profileId),
-        voiceCloningAvailable: Boolean(guardianSampling.voiceClone(profileId)),
-      }));
+      sendJson(res, 200, samplingApiView(
+        guardianSampling.status(profileId),
+        videoService.profileStatus?.(profileId),
+      ));
       return true;
     }
     if (req.method === "POST") {
@@ -812,47 +1450,60 @@ async function apiHandler(req, res, url, runtime = {}) {
         return true;
       }
       try {
-        const input = await readJson(req, 10 * 1024 * 1024);
-        if (input.createElevenLabsVoiceClone === true) {
-          if (input.externalVoiceCloningApproved !== true) {
-            sendJson(res, 422, { error: "EXTERNAL_VOICE_CLONING_CONSENT_REQUIRED" });
-            return true;
+        const input = await readJson(req, 20 * 1024 * 1024);
+        const validationStore = createGuardianSamplingStore();
+        let clonedVoice = null;
+        let validatedSample;
+        try {
+          const validationStatus = validationStore.register(input);
+          validatedSample = validationStore.resolve(validationStatus.consentId, validationStatus.avatarAssetId);
+          if (activeVoiceProvider.name === "elevenlabs") {
+            if (!activeVoiceProvider.available) {
+              throw new ElevenLabsError("ELEVENLABS_NOT_CONFIGURED", "ElevenLabs is not configured");
+            }
+            clonedVoice = await activeVoiceProvider.cloneVoice({
+              bytes: validatedSample.voice.bytes,
+              mimeType: validatedSample.voice.mimeType,
+              name: `Mama Message ${profileId.slice(0, 8)}`,
+            });
           }
-          if (Number(input.voiceDurationSeconds) < 30) {
-            sendJson(res, 422, { error: "VOICE_CLONE_SAMPLE_TOO_SHORT" });
-            return true;
+        } finally {
+          validationStore.delete();
+        }
+
+        const previousStatus = guardianSampling.status(profileId);
+        const previousSample = previousStatus.configured
+          ? guardianSampling.resolve(profileId, previousStatus.consentId, previousStatus.avatarAssetId)
+          : null;
+        let created;
+        try {
+          if (previousStatus.configured) {
+            await endTavusConversationsForProfile(profileId, activeTavusProvider);
+            await videoService.deleteRemote?.(profileId);
           }
+          created = guardianSampling.register(profileId, input, { voiceClone: clonedVoice });
+        } catch (error) {
+          if (clonedVoice?.voiceId) await activeVoiceProvider.deleteVoice(clonedVoice.voiceId).catch(() => {});
+          throw error;
         }
-        const previousClone = guardianSampling.voiceClone(profileId);
-        if (previousClone?.provider === "elevenlabs") {
-          await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).deleteClone(previousClone.voiceId);
+        if (previousSample?.voiceClone?.voiceId && previousSample.voiceClone.voiceId !== clonedVoice?.voiceId) {
+          await activeVoiceProvider.deleteVoice(previousSample.voiceClone.voiceId).catch(() => {});
         }
-        const registered = guardianSampling.register(profileId, input);
-        if (input.createElevenLabsVoiceClone === true) {
-          const resolved = guardianSampling.resolve(profileId, registered.consentId, registered.avatarAssetId);
-          const clone = await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).createClone({
-            bytes: resolved.voice.bytes,
-            mimeType: resolved.voice.mimeType,
-            name: `${registered.subjectLabel || "Guardian"} - おへんじ`,
-            externalProcessingApproved: true,
-          });
-          if (!clone) {
-            sendJson(res, 502, { error: "ELEVENLABS_VOICE_CLONE_FAILED" });
-            return true;
-          }
-          guardianSampling.storeVoiceClone(profileId, clone);
-        }
-        sendJson(res, 201, samplingApiView({
-          ...guardianSampling.status(profileId),
-          voiceCloningAvailable: Boolean(guardianSampling.voiceClone(profileId)),
-        }));
+        sendJson(res, 201, samplingApiView(created, videoService.profileStatus?.(profileId)));
       } catch (error) {
         const statusCode = error.message === "PAYLOAD_TOO_LARGE"
           ? 413
+          : error instanceof ElevenLabsError
+            ? error.status === 401 ? 401 : error.status === 429 ? 429 : 502
           : error instanceof GuardianSamplingError
             ? error.statusCode
             : 400;
-        sendJson(res, statusCode, { error: error.code || "SAMPLING_REQUEST_INVALID" });
+        sendJson(res, statusCode, {
+          error: error.code || "SAMPLING_REQUEST_INVALID",
+          message: error instanceof ElevenLabsError
+            ? "ElevenLabsで声を作れませんでした。APIキー、利用枠、録音内容を確認してください。"
+            : undefined,
+        });
       }
       return true;
     }
@@ -861,9 +1512,30 @@ async function apiHandler(req, res, url, runtime = {}) {
         sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
         return true;
       }
-      const previousClone = guardianSampling.voiceClone(profileId);
-      if (previousClone?.provider === "elevenlabs") {
-        await (runtime.elevenLabsVoiceService ?? elevenLabsVoiceService).deleteClone(previousClone.voiceId);
+      const previousStatus = guardianSampling.status(profileId);
+      const previousSample = previousStatus.configured
+        ? guardianSampling.resolve(profileId, previousStatus.consentId, previousStatus.avatarAssetId)
+        : null;
+      if (previousSample?.voiceClone?.voiceId && activeVoiceProvider.available) {
+        try {
+          await activeVoiceProvider.deleteVoice(previousSample.voiceClone.voiceId);
+        } catch {
+          sendJson(res, 502, {
+            error: "ELEVENLABS_DELETE_FAILED",
+            message: "ElevenLabs上の音声を削除できませんでした。接続を確認してもう一度お試しください。",
+          });
+          return true;
+        }
+      }
+      try {
+        await endTavusConversationsForProfile(profileId, activeTavusProvider);
+        await videoService.deleteRemote?.(profileId);
+      } catch {
+        sendJson(res, 502, {
+          error: "REMOTE_AVATAR_DELETE_FAILED",
+          message: "外部サービス上の本人アバターを削除できませんでした。接続を確認してもう一度お試しください。",
+        });
+        return true;
       }
       const result = guardianSampling.delete(profileId);
       sendJson(res, 200, { ...samplingApiView(result), deleted: result.deleted });
@@ -875,6 +1547,7 @@ async function apiHandler(req, res, url, runtime = {}) {
       status: "ok",
       routerMode,
       routerConfigured: routerProvider.available,
+      routerModel: process.env.ORCAROUTER_MODEL || "orcarouter/auto",
       sttMode,
       sttConfigured: Boolean(process.env.STT_API_KEY || process.env.OPENAI_API_KEY),
       speechMode,
@@ -887,12 +1560,51 @@ async function apiHandler(req, res, url, runtime = {}) {
       preRecordedVideoConfigured: Boolean(process.env.PREGENERATED_VIDEO_URL),
       videoGenerationMode,
       videoGenerationProvider: videoProvider.name,
-      videoGenerationConfigured: videoProvider.available,
+      videoGenerationConfigured: videoGenerationMode === "tavus"
+        ? tavusProvider.streamingAvailable
+        : videoProvider.available,
+      replyMotionConfigured: videoProvider.name === "heygen" && videoProvider.available,
+      liveAvatarConfigured: liveAvatarProvider.available,
+      liveAvatarMode: liveAvatarProvider.status().mode,
+      liveAvatarSandbox: liveAvatarProvider.sandbox,
+      liveAvatarCustomAvatarConfigured: liveAvatarProvider.customAvatarConfigured,
+      tavusConfigured: tavusProvider.streamingAvailable,
+      tavusFaceCreationConfigured: tavusProvider.faceCreationAvailable,
+      voiceCloningMode,
+      voiceCloningProvider: activeVoiceProvider.name,
+      voiceCloningConfigured: activeVoiceProvider.available,
     });
     return true;
   }
-  if (req.method === "GET" && url.pathname === "/api/guardian/conversations") {
+  if (req.method === "POST" && url.pathname === "/api/guardian/pairing") {
     const guardianProfileId = readGuardianProfileId(req);
+    if (!guardianProfileId) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    if (!samplingMutationAllowed(req)) {
+      sendJson(res, 403, { error: "CROSS_SITE_REQUEST_FORBIDDEN" });
+      return true;
+    }
+    res.setHeader("cache-control", "no-store");
+    sendJson(res, 201, createGuardianPairing(guardianProfileId));
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/api/guardian/conversations") {
+    let guardianProfileId = readGuardianProfileId(req);
+    const pairingCode = req.headers["x-guardian-pairing-code"];
+    if (pairingCode) {
+      const pairedProfileId = resolveGuardianPairing(pairingCode);
+      if (!pairedProfileId) {
+        sendJson(res, 401, { error: "GUARDIAN_PAIRING_INVALID" });
+        return true;
+      }
+      if (guardianProfileId && guardianProfileId !== pairedProfileId) {
+        sendJson(res, 404, { error: "NOT_FOUND" });
+        return true;
+      }
+      guardianProfileId = pairedProfileId;
+    }
     if (!guardianProfileId) {
       sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
       return true;
@@ -938,7 +1650,18 @@ async function apiHandler(req, res, url, runtime = {}) {
         return true;
       }
       if (profileId) {
-        if (input.action === "revoke") guardianSampling.revoke(profileId);
+        if (input.action === "revoke") {
+          const previousStatus = guardianSampling.status(profileId);
+          const previousSample = previousStatus.configured
+            ? guardianSampling.resolve(profileId, previousStatus.consentId, previousStatus.avatarAssetId)
+            : null;
+          if (previousSample?.voiceClone?.voiceId && activeVoiceProvider.available) {
+            await activeVoiceProvider.deleteVoice(previousSample.voiceClone.voiceId).catch(() => {});
+          }
+          await endTavusConversationsForProfile(profileId, activeTavusProvider).catch(() => {});
+          await videoService.deleteRemote?.(profileId).catch(() => {});
+          guardianSampling.revoke(profileId);
+        }
         demoConsentByProfile.set(profileId, input.action === "restore");
         sendJson(res, 200, profileDemoConsent(profileId));
       } else {
@@ -1072,6 +1795,28 @@ async function apiHandler(req, res, url, runtime = {}) {
     return true;
   }
 
+  const conversationMatch = url.pathname.match(/^\/api\/conversations\/([^/]+)$/);
+  if (req.method === "DELETE" && conversationMatch) {
+    const guardianProfileId = readGuardianProfileId(req);
+    if (guardianProfileId === false) {
+      sendJson(res, 400, { error: "GUARDIAN_PROFILE_ID_INVALID" });
+      return true;
+    }
+    let conversationId;
+    try {
+      conversationId = decodeURIComponent(conversationMatch[1]).trim();
+    } catch {
+      conversationId = "";
+    }
+    if (!conversationId || conversationId.length > 128) {
+      sendJson(res, 400, { error: "CONVERSATION_ID_INVALID" });
+      return true;
+    }
+    const deleted = conversations.delete(conversationStorageKey(guardianProfileId, conversationId));
+    sendJson(res, 200, { deleted });
+    return true;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/logs") {
     sendJson(res, 200, { logs: technicalLogs });
     return true;
@@ -1105,6 +1850,12 @@ async function serveStatic(res, pathname) {
 export function createAppServer(options = {}) {
   const runtime = {
     videoService: options.videoService ?? guardianVideoService,
+    replyVideoProvider: options.replyVideoProvider
+      ?? (videoProvider.name === "heygen" ? videoProvider : null),
+    videoDownloader: options.videoDownloader ?? downloadGeneratedVideo,
+    voiceCloningProvider: options.voiceCloningProvider ?? voiceCloningProvider,
+    liveAvatarProvider: options.liveAvatarProvider ?? liveAvatarProvider,
+    tavusProvider: options.tavusProvider ?? tavusProvider,
     customVoiceService: options.customVoiceService ?? customVoiceService,
     elevenLabsVoiceService: options.elevenLabsVoiceService ?? elevenLabsVoiceService,
     guardianViewAccessCode: String(options.guardianViewAccessCode

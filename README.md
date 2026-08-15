@@ -78,7 +78,7 @@ Node.jsアプリとして、次のMUST経路を実装しています。
 - 通常・生成失敗・安全・同意不備・冪等性・ログ秘匿を含む自動テスト
 - CSP、Permissions Policy、入力長制限、危険・誤認表現の返答拒否
 
-既定起動はキー不要のデモモードです。`VOICE_CLONING_PROVIDER=elevenlabs`を設定した実接続では、大人向け画面で8場面×3文を1文ずつ録音します。24クリップはブラウザ内で16kHz・mono WAVへ結合され、ElevenLabs Instant Voice Cloneへの登録は1回だけ行われます。Tavusモードの会話時は、OrcaRouterの返答文をElevenLabsの日本語TTSへ送り、24kHz・16-bit・mono PCMへ変換してTavus Echoへ渡します。Tavusに接続できない場合は、登録写真とクローン音声を使うLEVEL 3へ戻ります。
+既定起動はキー不要のデモモードです。`VOICE_CLONING_PROVIDER=elevenlabs`と`SPEECH_PROVIDER=elevenlabs`を設定した実接続では、大人向け画面で8場面×3文を1文ずつ録音します。24クリップはブラウザ内で16kHz・mono WAVへ結合され、ElevenLabs Instant Voice Cloneへの登録は1回だけ行われます。Tavusモードの会話時は、OrcaRouterの返答文をElevenLabsの日本語TTSへ送り、24kHz・16-bit・mono PCMへ変換してTavus Echoへ渡します。Tavusに接続できない場合は、登録写真とクローン音声を使うLEVEL 3へ戻ります。
 
 写真、元音声、生成MP4、ElevenLabsの`voice_id`はブラウザが保持するランダムな保護者プロフィールIDごとに分離し、サーバー専用の `.data` へAES-256-GCMで暗号化保存します。APIキーと`voice_id`はブラウザへ返しません。同じブラウザではサーバー再起動後も自動復元され、別プロフィールからは参照できません。素材の再登録・削除・同意停止では生成動画を含む暗号化データと素材URLを失効させ、削除時はElevenLabs上のクローン削除も試みます。TavusのAPIキーもサーバーだけが保持し、ブラウザへ返すのは同意確認後に発行した非公開通話の短時間トークンだけです。
 
@@ -99,12 +99,13 @@ npm start
 
 ブラウザで `http://127.0.0.1:4173` を開きます。マイク権限を使わずに確認する場合は、画面の「デモ音声で進める」を選択します。
 
-実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。会話判定は`ROUTER_PROVIDER=orcarouter`、リアルタイム映像は`VIDEO_GENERATION_PROVIDER=tavus`、実STTは必要に応じて`STT_PROVIDER=openai`を指定してください。動画処理は大人向け画面で外部送信同意を確認した場合だけ開始されます。`VIDEO_GENERATION_PROVIDER=disabled`へ戻すとキーが残っていても写真・返信音声を動画サービスへ送信しません。
+実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。会話判定は`ROUTER_PROVIDER=orcarouter`、クローン作成と本人声TTSは`VOICE_CLONING_PROVIDER=elevenlabs`と`SPEECH_PROVIDER=elevenlabs`、リアルタイム映像は`VIDEO_GENERATION_PROVIDER=tavus`、実STTは必要に応じて`STT_PROVIDER=openai`を指定してください。動画処理は大人向け画面で外部送信同意を確認した場合だけ開始されます。`VIDEO_GENERATION_PROVIDER=disabled`へ戻すとキーが残っていても写真・返信音声を動画サービスへ送信しません。
 
 ### ElevenLabs音声クローンの設定
 
 ```dotenv
 VOICE_CLONING_PROVIDER=elevenlabs
+SPEECH_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=YOUR_SERVER_SIDE_API_KEY
 ELEVENLABS_BASE_URL=https://api.elevenlabs.io/v1
 ELEVENLABS_MODEL=eleven_multilingual_v2
@@ -157,7 +158,7 @@ HEYGEN_RESPONSE_TIMEOUT_SECONDS=180
 
 大人向け画面で写真・返信音声の外部送信へ同意し、「本人アバターを準備する」を押します。準備完了後は、通常返答ごとにElevenLabs音声をHeyGenへ一時アップロードし、`supportMode`に応じた短い`motion_prompt`と表現強度を指定します。生成済み返信動画はサーバーへ取り込んでから配信し、HeyGenへ送った一時音声アセットと生成動画は取り込み後に削除を試みます。安全引き継ぎでは本人動画を生成しません。
 
-### D-ID無料トライアルの設定
+### 旧D-ID経路を明示的に試す場合
 
 1. [D-ID Studio](https://studio.d-id.com/)でトライアルアカウントを作成します。
 2. StudioのAccount settingsでAPI keyを発行し、一度だけ表示される`API_USERNAME:API_PASSWORD`を安全な場所へ保存します。

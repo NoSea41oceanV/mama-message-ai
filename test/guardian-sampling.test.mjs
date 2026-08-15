@@ -118,6 +118,28 @@ test("voice-only replacement preserves the guardian photo and consent identifier
   assert.equal(previousVoice.every((byte) => byte === 0), true);
 });
 
+test("speaking style is normalized, exposed, and updated without replacing media", () => {
+  const store = createGuardianSamplingStore();
+  const created = store.register(validRegistration({
+    subjectLabel: "パパ",
+    selfReference: "  とうちゃん  ",
+    favoriteEndings: ["だね", "だね", "してみようか"],
+    favoritePhrases: ["だいじょうぶだよ"],
+    replyExamples: [{ situation: "ほめるとき", reply: "わあ、できたね" }],
+  }));
+  const before = store.resolve(created.consentId, created.avatarAssetId);
+  assert.deepEqual(created.speakingStyle, {
+    selfReference: "とうちゃん",
+    favoriteEndings: ["だね", "してみようか"],
+    favoritePhrases: ["だいじょうぶだよ"],
+    replyExamples: [{ situation: "ほめるとき", reply: "わあ、できたね" }],
+  });
+  const updated = store.updatePreferences({ favoritePhrases: ["ちゃんとみてるよ"] });
+  const after = store.resolve(updated.consentId, updated.avatarAssetId);
+  assert.equal(after.photo, before.photo);
+  assert.deepEqual(updated.speakingStyle.favoritePhrases, ["ちゃんとみてるよ"]);
+});
+
 test("sampling registration rejects MIME spoofing and long voice samples", () => {
   const store = createGuardianSamplingStore();
   assert.throws(
@@ -125,7 +147,7 @@ test("sampling registration rejects MIME spoofing and long voice samples", () =>
     (error) => error.code === "PHOTO_CONTENT_INVALID",
   );
   assert.throws(
-    () => store.register(validRegistration({ voiceDurationSeconds: 121 })),
+    () => store.register(validRegistration({ voiceDurationSeconds: 361 })),
     (error) => error.code === "VOICE_DURATION_INVALID",
   );
   assert.throws(

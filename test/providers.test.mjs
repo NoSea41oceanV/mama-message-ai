@@ -987,6 +987,12 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
     transcript: "ブロックでおうちを作れたよ",
     favoriteTopics: ["恐竜", "電車"],
     childName: "ひなたちゃん",
+    speakingStyle: {
+      selfReference: "パパ",
+      favoriteEndings: ["だね"],
+      favoritePhrases: ["だいじょうぶだよ"],
+      replyExamples: [{ situation: "ほめるとき", reply: "わあ、さいごまでできたんだね" }],
+    },
     history: [
       { role: "user", content: "きのうはタワーを作ったよ" },
       { role: "assistant", content: "高くできたんだね。" },
@@ -1009,6 +1015,7 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.deepEqual(request.body.messages.slice(1), [
     { role: "system", content: "登録された好きなもの: 恐竜、電車。必要なときだけ、この中から一つを自然な安心材料や遊びの話題として使ってください。" },
     { role: "system", content: "こどものよびかた: ひなたちゃん。必要なときだけ、この呼び方で自然に呼びかけてください。" },
+    { role: "system", content: "登録された話し方プロフィールです。安全方針と事実性を最優先し、自然な場合だけ文体の参考にしてください。文例をそのまま繰り返す必要はありません。\n自分の呼び方: パパ\nよく使う語尾: だね\nよく使う言葉: だいじょうぶだよ\n言い方例（ほめるとき）: わあ、さいごまでできたんだね" },
     { role: "user", content: "きのうはタワーを作ったよ" },
     { role: "assistant", content: "高くできたんだね。" },
     { role: "user", content: "ブロックでおうちを作れたよ" },

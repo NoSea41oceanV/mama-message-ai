@@ -9,8 +9,8 @@ test("keeps an inline follow-up reply within the fixed response screen", async (
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
   ]);
 
-  assert.match(html, /\/styles\.css\?v=25/);
-  assert.match(html, /\/app\.js\?v=31/);
+  assert.match(html, /\/styles\.css\?v=26/);
+  assert.match(html, /\/app\.js\?v=32/);
   assert.match(css, /\.screen\[data-screen="response"\] \{ overflow: hidden; \}/);
   assert.match(css, /grid-template-rows: auto minmax\(150px, 1fr\) auto auto 184px auto;/);
   assert.match(css, /\.response-conversation \{[^}]*height: 184px;[^}]*overflow: hidden;/);

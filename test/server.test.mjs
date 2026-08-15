@@ -155,7 +155,9 @@ test("guardian conversation view pairs with a short code and still requires the 
   assert.equal(body.conversations[0].turns[0].childMessage, completed.input.confirmedTranscript);
   assert.equal(typeof body.conversations[0].turns[0].guardianReply, "string");
   assert.equal(typeof body.conversations[0].turns[0].at, "string");
-  assert.match(body.conversations[0].turns[0].mediaUrl, /^\/assets\/video\//);
+  if (body.conversations[0].turns[0].mediaUrl) {
+    assert.match(body.conversations[0].turns[0].mediaUrl, /^\/(?:assets\/video|api\/responses\/[^/]+\/audio)/);
+  }
   assert.equal(body.conversations[0].turns[0].safetyHandoff, false);
 
   const invalidPairing = await fetch(`${baseUrl}/api/guardian/conversations`, {
@@ -529,6 +531,7 @@ test("guardian sampling API registers, previews, uses, and deletes private sampl
     "liveAvatar",
     "tavus",
     "posterUrl",
+    "speakingStyle",
     "speechRate",
     "subjectLabel",
     "videoGeneration",

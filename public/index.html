@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おへんじ</title>
-    <link rel="stylesheet" href="/styles.css?v=25">
+    <link rel="stylesheet" href="/styles.css?v=26">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -181,6 +181,15 @@
         <button class="danger-button" id="adultConfirmButton" type="button">おとなへ切り替える</button>
       </section>
 
+      <section class="screen registration-screen" data-screen="registration" aria-labelledby="registrationTitle">
+        <div class="registration-heading">
+          <p class="section-label">大人向け登録</p>
+          <h1 id="registrationTitle">写真・声・話し方を登録</h1>
+          <p class="lead">普段その子に接するときの、いつもの表情と言い方を教えてください。</p>
+        </div>
+        <div id="registrationMount"></div>
+      </section>
+
       <footer class="app-footer">
         <span>おとなといっしょに使ってね</span>
         <span id="connectionStatus">接続確認中</span>
@@ -193,6 +202,7 @@
         <button class="icon-button" id="closeDialog" type="button" aria-label="閉じる">×</button>
       </div>
       <p>これは本人同意済み素材を使ったAI生成デモです。本物の保護者とのリアルタイム通話ではありません。</p>
+      <button class="primary-button" id="openRegistrationButton" type="button">写真・声・話し方を登録する</button>
       <section class="sampling-panel" aria-labelledby="samplingTitle">
         <div class="sampling-heading">
           <div>
@@ -201,8 +211,12 @@
           </div>
           <span class="sample-badge" id="sampleBadge">未登録</span>
         </div>
-        <label class="field-label" for="guardianLabel">子どもからの呼び方</label>
-        <input id="guardianLabel" class="text-input" type="text" maxlength="20" value="ママ" autocomplete="off">
+        <div class="registration-card registration-identity-card">
+          <span class="guardian-examples" aria-hidden="true">👩‍🦰　👨‍🦱</span>
+          <label class="field-label" for="guardianLabel">自分の呼び方</label>
+          <input id="guardianLabel" class="text-input" type="text" maxlength="20" placeholder="例：ママ、パパ、ばあば、先生" autocomplete="off">
+          <p class="sample-note">お子さまの前で使う呼び方を自由に入力できます。</p>
+        </div>
         <div class="favorite-topics-panel">
           <label class="field-label" for="childNameInput">こどものよびかた</label>
           <input id="childNameInput" class="text-input" type="text" maxlength="20" placeholder="れい：ひなたちゃん" autocomplete="off">
@@ -216,6 +230,13 @@
           <label class="field-label" for="favoriteTopicsInput">その子の好きなもの</label>
           <input id="favoriteTopicsInput" class="text-input" type="text" maxlength="180" placeholder="例：恐竜、電車、プリキュア" autocomplete="off">
           <p class="sample-note">最大5つ。「、」で区切ると、待っている間の安心できる話題に使います。</p>
+          <label class="field-label settings-field" for="favoriteEndingsInput">よく使う語尾</label>
+          <input id="favoriteEndingsInput" class="text-input" type="text" maxlength="180" placeholder="例：〜だね、〜してみようか、〜できたね" autocomplete="off">
+          <label class="field-label settings-field" for="favoritePhrasesInput">よく使う言葉・口癖</label>
+          <textarea id="favoritePhrasesInput" class="text-input" rows="3" maxlength="360" placeholder="例：だいじょうぶだよ、ちゃんと見てるよ"></textarea>
+          <label class="field-label settings-field" for="replyExamplesInput">いつもの言い方の例</label>
+          <textarea id="replyExamplesInput" class="text-input" rows="4" maxlength="600" placeholder="例：ほめるとき｜わあ、最後までできたんだね！パパもうれしいよ"></textarea>
+          <p class="sample-note">1行に「場面｜いつもの言い方」を入力してください。保存前に確認できます。</p>
           <button class="secondary-button compact" id="saveFavoriteTopicsButton" type="button" disabled>おはなし設定を保存</button>
           <p id="favoriteTopicsStatus" class="inline-status" role="status"></p>
         </div>
@@ -230,18 +251,21 @@
           <div class="sample-picker voice-picker">
             <span class="sample-icon" aria-hidden="true">声</span>
             <strong>声のサンプル</strong>
-            <span id="sampleVoiceLabel">1〜2分がおすすめ</span>
-            <small class="sample-phrase">普段その子に話す声・間・抑揚で、下の文章を読んでください。</small>
+            <span id="sampleVoiceLabel">全24文・4〜6分が目安</span>
+            <small class="sample-phrase">演技せず、普段その子に話すときのいつもの言い方で読んでください。</small>
             <button class="secondary-button compact" id="sampleRecordButton" type="button">録音する</button>
             <label class="file-link" for="sampleVoiceInput">音声を選ぶ</label>
             <input id="sampleVoiceInput" type="file" accept="audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4">
             <audio id="sampleVoicePreview" controls preload="metadata" hidden></audio>
           </div>
         </div>
-        <details class="sample-script" open>
-          <summary>1〜2分の読み上げ文</summary>
-          <p>「お話ししてくれてありがとう。いつも応援しているよ。うれしかったことも、悲しかったことも、ゆっくり聞かせてね。うまくできない日があっても大丈夫。少し休んでから、また一緒にやってみよう。今日あったことを、はじめから教えてくれる？あなたのお話を聞けるのを、楽しみにしているよ。大好きな遊びのお話も聞きたいな。どんなところがいちばん楽しかった？そうなんだ、よく教えてくれたね。お迎えを待つ時間が長く感じるときもあるよね。いま一緒にいる人のそばで、できそうなことをひとつ選んでみようか。絵本を読むのと、おもちゃで遊ぶの、どちらがいいかな。急がなくて大丈夫だよ。あなたのペースでお話ししてね。会えたときに、今日のお話をたくさん聞かせてね。」</p>
-        </details>
+        <section class="sample-script scenario-recorder" aria-labelledby="sampleScenarioTitle">
+          <p class="section-label" id="sampleScenarioProgress">1 / 8</p>
+          <h4 id="sampleScenarioTitle">ほめるとき</h4>
+          <p class="sample-note">次の3文を、いつもの言い方で読んでください。</p>
+          <ol id="sampleScenarioExamples"></ol>
+          <div class="action-row"><button class="secondary-button compact" id="previousScenarioButton" type="button">前の場面</button><button class="secondary-button compact" id="nextScenarioButton" type="button">次の場面</button></div>
+        </section>
         <label class="check-row sample-consent">
           <input id="faceConsentCheck" type="checkbox">
           <span>顔写真をAIメッセージ作成に使うことに同意します</span>
@@ -254,7 +278,7 @@
           <input id="externalVoiceCloningConsentCheck" type="checkbox">
           <span>本人の声をElevenLabsへ送信し、本人声クローンを作成・利用することに同意します</span>
         </label>
-        <p class="sample-note">本人声クローンには、静かな場所で30秒〜2分（推奨1〜2分）録音してください。</p>
+        <p class="sample-note">8場面・各3文を、静かな場所で続けて録音してください。録音方式とクローン作成方式は従来と同じです。</p>
         <div class="action-row sample-actions">
           <button class="primary-button" id="saveSampleButton" type="button">素材を登録</button>
           <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
@@ -297,6 +321,6 @@
 
     <script src="/vendor/liveavatar-sdk.js?v=1"></script>
     <script src="/vendor/daily-sdk.js?v=2"></script>
-    <script type="module" src="/app.js?v=31"></script>
+    <script type="module" src="/app.js?v=32"></script>
   </body>
 </html>

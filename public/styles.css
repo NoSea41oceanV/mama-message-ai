@@ -526,6 +526,27 @@ dialog::backdrop { background: rgb(8 47 85 / 52%); }
 dialog .danger-button { border-color: #b52e2e; background: #e64e4e; color: var(--white); box-shadow: none; }
 dialog .secondary-button { box-shadow: none; }
 .sampling-panel { margin: 22px 0 0; padding: 20px 0 4px; border-top: 2px solid var(--rule); border-bottom: 2px solid var(--rule); }
+.registration-screen {
+  overflow-y: auto;
+  background: #fffaf0;
+}
+.registration-screen::before,
+.registration-screen::after { display: none; }
+.registration-heading { position: relative; z-index: 1; text-align: left; }
+.registration-heading h1 { margin-bottom: 8px; color: var(--coral-deep); font-size: 30px; text-align: left; }
+.registration-heading .lead { margin: 0; text-align: left; }
+.registration-screen .sampling-panel { margin-top: 18px; padding: 20px; border: 2px solid #f0d7b6; border-radius: 16px; background: var(--white); box-shadow: 0 10px 24px rgb(8 47 85 / 10%); }
+.registration-card { margin: 12px 0; padding: 14px; border: 1px solid #b8d5e1; border-radius: 12px; background: #f5fbfd; }
+.registration-identity-card { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 12px; }
+.registration-identity-card .guardian-examples { grid-row: 1 / 4; font-size: 34px; letter-spacing: -7px; }
+.registration-identity-card .field-label,
+.registration-identity-card .sample-note { grid-column: 2; }
+.settings-field { margin-top: 12px; }
+.scenario-recorder { margin-top: 4px; }
+.scenario-recorder h4 { margin: 4px 0 2px; color: var(--ink-strong); font-size: 18px; }
+.scenario-recorder ol { margin: 10px 0 14px; padding-left: 24px; }
+.scenario-recorder li { margin: 8px 0; color: var(--ink-strong); font-size: 14px; font-weight: 800; line-height: 1.6; }
+.scenario-recorder .action-row { margin: 0; }
 .sampling-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .sampling-heading h3 { margin: 0 0 14px; font-size: 20px; }
 .sample-badge { flex: 0 0 auto; padding: 5px 8px; border: 2px solid var(--rule); border-radius: 8px; background: #eef5f8; color: var(--muted); font-size: 12px; font-weight: 900; }
@@ -584,6 +605,12 @@ dialog .secondary-button { box-shadow: none; }
 @media (min-width: 760px) {
   body { padding: 24px; }
   .app-shell { min-height: calc(100dvh - 48px); max-height: 900px; border-radius: 8px; }
+}
+
+@media (max-width: 390px) {
+  .registration-screen { padding-inline: 16px; }
+  .registration-screen .sampling-panel { padding: 15px; }
+  .sample-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-height: 760px) {

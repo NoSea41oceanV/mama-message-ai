@@ -94,10 +94,47 @@ const childPairingCode = document.querySelector("#childPairingCode");
 const pairingCodeNote = document.querySelector("#pairingCodeNote");
 const copyPairingCodeButton = document.querySelector("#copyPairingCodeButton");
 const renewPairingCodeButton = document.querySelector("#renewPairingCodeButton");
+const registrationMount = document.querySelector("#registrationMount");
+const samplingPanel = document.querySelector(".sampling-panel");
+const openRegistrationButton = document.querySelector("#openRegistrationButton");
+const favoriteEndingsInput = document.querySelector("#favoriteEndingsInput");
+const favoritePhrasesInput = document.querySelector("#favoritePhrasesInput");
+const replyExamplesInput = document.querySelector("#replyExamplesInput");
+const sampleScenarioProgress = document.querySelector("#sampleScenarioProgress");
+const sampleScenarioTitle = document.querySelector("#sampleScenarioTitle");
+const sampleScenarioExamples = document.querySelector("#sampleScenarioExamples");
+const previousScenarioButton = document.querySelector("#previousScenarioButton");
+const nextScenarioButton = document.querySelector("#nextScenarioButton");
 
 const guardianProfileStorageKey = "guardian-ai.profile-id.v1";
-const maxVoiceSampleSeconds = 120;
+const maxVoiceSampleSeconds = 360;
+const maxVoiceSampleBytes = 20 * 1024 * 1024;
 let guardianProfileId;
+
+const sampleScenarios = [
+  { title: "ほめるとき", examples: ["わあ、さいごまでできたんだね！", "がんばっていたの、ちゃんとわかってるよ。", "できたね。いっしょにうれしいな。"] },
+  { title: "かなしいとき", examples: ["かなしかったね。ここでいっしょにいるよ。", "ないてもだいじょうぶだよ。", "おちつくまで、ゆっくりでいいからね。"] },
+  { title: "おちつかせるとき", examples: ["だいじょうぶ。ゆっくりひとつずつやろうね。", "いっかい、ふーっていきをはいてみようか。", "あわてなくていいよ。そばにいるひととやってみよう。"] },
+  { title: "はげますとき", examples: ["もうすこしだけ、いっしょにやってみようか。", "うまくいかなくても、やってみたことがすてきだよ。", "あなたならだいじょうぶ。ゆっくりでいいよ。"] },
+  { title: "きもちをきりかえるとき", examples: ["つぎは、なにをしてまとうか。", "あとひとつやったら、べつのことをしてみよう。", "そばにいるひとと、たのしいことをひとつえらぼうか。"] },
+  { title: "おなか・ねむさなどをきくとき", examples: ["おなかがすいたのかな。", "ねむたくなってきた？", "おみずをのんで、すこしやすもうか。"] },
+  { title: "おはなしをきくとき", examples: ["うんうん、それでどうなったの？", "そうだったんだね。もっときかせて。", "いちばんたのしかったのは、どれだった？"] },
+  { title: "やさしくききかえすとき", examples: ["もういちど、ゆっくりおしえてくれる？", "こっちとこっち、どちらのことかな？", "うまくわからなかったから、いっしょにかくにんしよう。"] },
+];
+let registrationScenarioIndex = 0;
+
+function renderSampleScenario() {
+  const scenario = sampleScenarios[registrationScenarioIndex];
+  sampleScenarioProgress.textContent = `${registrationScenarioIndex + 1} / ${sampleScenarios.length}`;
+  sampleScenarioTitle.textContent = scenario.title;
+  sampleScenarioExamples.replaceChildren(...scenario.examples.map((sentence) => {
+    const item = document.createElement("li");
+    item.textContent = sentence;
+    return item;
+  }));
+  previousScenarioButton.disabled = registrationScenarioIndex === 0;
+  nextScenarioButton.textContent = registrationScenarioIndex === sampleScenarios.length - 1 ? "最初の場面へ" : "次の場面";
+}
 
 function getGuardianProfileId() {
   if (guardianProfileId) return guardianProfileId;
@@ -414,14 +451,14 @@ function readAudioDuration(url) {
 }
 
 async function setSampleVoice(blob, knownDurationSeconds = null) {
-  if (!blob || blob.size > 10 * 1024 * 1024) throw new Error("声のサンプルは10MB以下にしてください");
+  if (!blob || blob.size > maxVoiceSampleBytes) throw new Error("声のサンプルは20MB以下にしてください");
   const previewUrl = URL.createObjectURL(blob);
   const durationSeconds = Number.isFinite(knownDurationSeconds)
     ? knownDurationSeconds
     : await readAudioDuration(previewUrl);
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > maxVoiceSampleSeconds + 0.5) {
     URL.revokeObjectURL(previewUrl);
-    throw new Error("声のサンプルは2分以内にしてください");
+    throw new Error("声のサンプルは6分以内にしてください");
   }
   state.sampleVoiceBlob = blob;
   state.sampleVoiceDurationSeconds = durationSeconds;
@@ -647,12 +684,17 @@ function renderSampling(sample) {
   const configured = Boolean(sample?.configured);
   sampleBadge.textContent = configured ? (sample.active ? "登録済み" : "停止中") : "未登録";
   sampleBadge.classList.toggle("is-ready", configured && sample.active);
-  guardianLabel.value = sample?.subjectLabel || guardianLabel.value || "ママ";
+  guardianLabel.value = sample?.speakingStyle?.selfReference || sample?.subjectLabel || guardianLabel.value;
   favoriteTopicsInput.value = Array.isArray(sample?.favoriteTopics)
     ? sample.favoriteTopics.join("、")
     : "";
   childNameInput.value = sample?.childName || "";
   speechRateSelect.value = String(sample?.speechRate ?? 0.82);
+  favoriteEndingsInput.value = (sample?.speakingStyle?.favoriteEndings ?? []).join("、");
+  favoritePhrasesInput.value = (sample?.speakingStyle?.favoritePhrases ?? []).join("\n");
+  replyExamplesInput.value = (sample?.speakingStyle?.replyExamples ?? [])
+    .map((item) => `${item.situation}｜${item.reply}`)
+    .join("\n");
   if (!speechRateSelect.value) speechRateSelect.value = "0.82";
   saveFavoriteTopicsButton.disabled = !configured;
   deleteSampleButton.disabled = !configured;
@@ -674,7 +716,7 @@ function renderSampling(sample) {
       : "登録済み・クローン未作成";
   } else if (!state.sampleVoiceBlob) {
     sampleVoicePreview.hidden = true;
-    sampleVoiceLabel.textContent = "1〜2分がおすすめ";
+    sampleVoiceLabel.textContent = "全24文・4〜6分が目安";
   }
   faceConsentCheck.checked = Boolean(sample?.faceApproved && configured);
   voiceConsentCheck.checked = Boolean(
@@ -705,6 +747,38 @@ function favoriteTopicsFromInput() {
     .slice(0, 5);
 }
 
+function textListFromInput(input, maximum) {
+  return input.value
+    .split(/[、,\n]/)
+    .map((item) => item.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, maximum);
+}
+
+function replyExamplesFromInput() {
+  return replyExamplesInput.value
+    .split(/\n/)
+    .map((line) => {
+      const separator = line.search(/[｜|]/);
+      if (separator < 0) return null;
+      return {
+        situation: line.slice(0, separator).trim(),
+        reply: line.slice(separator + 1).trim(),
+      };
+    })
+    .filter((item) => item?.situation && item?.reply)
+    .slice(0, 12);
+}
+
+function speakingStyleFromInputs() {
+  return {
+    selfReference: guardianLabel.value.trim(),
+    favoriteEndings: textListFromInput(favoriteEndingsInput, 5),
+    favoritePhrases: textListFromInput(favoritePhrasesInput, 8),
+    replyExamples: replyExamplesFromInput(),
+  };
+}
+
 async function saveFavoriteTopics() {
   favoriteTopicsStatus.textContent = "";
   saveFavoriteTopicsButton.disabled = true;
@@ -716,6 +790,7 @@ async function saveFavoriteTopics() {
         favoriteTopics: favoriteTopicsFromInput(),
         childName: childNameInput.value.trim(),
         speechRate: Number(speechRateSelect.value),
+        ...speakingStyleFromInputs(),
       }),
     });
     const data = await response.json();
@@ -791,6 +866,7 @@ async function saveSampling() {
         favoriteTopics: favoriteTopicsFromInput(),
         childName: childNameInput.value.trim(),
         speechRate: Number(speechRateSelect.value),
+        ...speakingStyleFromInputs(),
         ...(state.samplePhoto ? {
           photoBase64: state.samplePhoto.base64,
           photoType: state.samplePhoto.type,
@@ -1889,6 +1965,21 @@ saveFavoriteTopicsButton.addEventListener("click", saveFavoriteTopics);
 deleteSampleButton.addEventListener("click", deleteSampling);
 generateVideoButton.addEventListener("click", generateSamplingVideo);
 previewCloneVoiceButton.addEventListener("click", previewClonedVoice);
+openRegistrationButton.addEventListener("click", async () => {
+  adultDialog.close();
+  await loadSampling().catch((error) => { samplingStatus.textContent = error.message; });
+  showScreen("registration");
+});
+previousScenarioButton.addEventListener("click", () => {
+  registrationScenarioIndex = Math.max(0, registrationScenarioIndex - 1);
+  renderSampleScenario();
+});
+nextScenarioButton.addEventListener("click", () => {
+  registrationScenarioIndex = registrationScenarioIndex === sampleScenarios.length - 1
+    ? 0
+    : registrationScenarioIndex + 1;
+  renderSampleScenario();
+});
 childModeButton.addEventListener("click", () => {
   showScreen("setup");
   issueGuardianPairing();
@@ -1958,6 +2049,10 @@ restoreConsent.addEventListener("click", () => updateConsent("restore").catch((e
 backButton.addEventListener("click", () => {
   stopSpeech();
   if (["setup", "guardian-login"].includes(state.screen)) showScreen("entry");
+  else if (state.screen === "registration") {
+    stopSampleRecording();
+    showScreen("setup");
+  }
   else if (state.screen === "guardian-chat") showScreen("guardian-login");
   else if (state.screen === "record") showScreen("setup");
   else if (state.screen === "transcript") showScreen("record");
@@ -1985,6 +2080,9 @@ responseAudio.addEventListener("error", () => {
   if (state.response.responseBundle.videoUrl) responseVideo.pause();
   mediaStage.classList.remove("is-speaking");
 });
+
+registrationMount.append(samplingPanel);
+renderSampleScenario();
 
 Promise.all([profileFetch("/api/consent").then((response) => response.json()), loadSampling()])
   .then(([consent]) => {

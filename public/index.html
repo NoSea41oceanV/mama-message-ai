@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#42bdf0">
     <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
     <title>おへんじ</title>
-    <link rel="stylesheet" href="/styles.css?v=23">
+    <link rel="stylesheet" href="/styles.css?v=25">
   </head>
   <body>
     <main class="app-shell" id="app">
@@ -16,10 +16,51 @@
           <span class="brand-mark" aria-hidden="true">●</span>
           <span>おへんじ</span>
         </div>
-        <button class="icon-button adult-button" id="adultButton" type="button" aria-label="大人向け情報を開く" title="大人向け設定"><span aria-hidden="true">⚙</span></button>
+        <button class="icon-button adult-button" id="adultButton" type="button" aria-label="大人向け情報を開く" title="大人向け設定" hidden><span aria-hidden="true">⚙</span></button>
       </header>
 
-      <section class="screen is-active" data-screen="setup" aria-labelledby="setupTitle">
+      <section class="screen entry-screen is-active" data-screen="entry" aria-labelledby="entryTitle">
+        <img class="mascot entry-mascot" src="/assets/messenger-mascot.png" alt="">
+        <p class="section-label">使い方をえらぶ</p>
+        <h1 id="entryTitle">今日はどちらで<br>使いますか？</h1>
+        <p class="lead">おはなしすると、離れた大人にも内容を届けられます。</p>
+        <button class="mode-card child-mode" id="childModeButton" type="button">
+          <span class="mode-icon" aria-hidden="true">♪</span>
+          <strong>おはなしを はじめる</strong>
+          <small>声でお話しして、おへんじを聞く</small>
+        </button>
+        <div class="entry-adult-link">
+          <span>保護者・見守る大人の方</span>
+          <button class="text-button" id="guardianModeButton" type="button">大人の確認画面へ</button>
+        </div>
+      </section>
+
+      <section class="screen guardian-login-screen" data-screen="guardian-login" aria-labelledby="guardianLoginTitle">
+        <p class="section-label">大人確認用</p>
+        <h1 id="guardianLoginTitle">家庭の会話を<br>確認する</h1>
+        <p class="lead">子ども側に表示された6桁コードと、大人用確認コードを入力してください。</p>
+        <form class="guardian-login-card" id="guardianLoginForm">
+          <label class="field-label" for="guardianPairingCode">6桁のペアリングコード</label>
+          <input class="text-input pairing-input" id="guardianPairingCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="123456" required>
+          <label class="field-label" for="guardianViewAccessCode">大人用確認コード</label>
+          <input class="text-input" id="guardianViewAccessCode" type="password" inputmode="numeric" autocomplete="current-password" required>
+          <button class="primary-button" type="submit">会話を確認する</button>
+          <p class="inline-error" id="guardianLoginError" role="alert"></p>
+        </form>
+        <p class="privacy-note">会話はサーバー上で期限付き保持され、技術ログやGitには保存されません。</p>
+      </section>
+
+      <section class="screen guardian-chat-screen" data-screen="guardian-chat" aria-labelledby="guardianChatTitle">
+        <div class="guardian-chat-heading">
+          <div><p class="section-label">大人確認用</p><h1 id="guardianChatTitle">届いたお話</h1></div>
+          <button class="secondary-button compact" id="refreshGuardianChat" type="button">更新</button>
+        </div>
+        <p class="family-id-line" id="guardianChatProfileId">子ども側と接続済み</p>
+        <div class="chat-list" id="guardianChatList" aria-live="polite"></div>
+        <p class="privacy-note" id="guardianRetentionNote"></p>
+      </section>
+
+      <section class="screen" data-screen="setup" aria-labelledby="setupTitle">
         <div class="sky-sparkles" aria-hidden="true"><i>✦</i><i>★</i><i>✦</i></div>
         <div class="setup-hero">
           <img class="mascot mascot-welcome" src="/assets/messenger-mascot.png" alt="">
@@ -27,6 +68,13 @@
         </div>
         <h1 id="setupTitle">いっしょに<br>おはなししよう</h1>
         <p class="lead">きょうのこと、きかせてね</p>
+        <div class="family-share-card">
+          <div><span>離れた大人に伝える6桁コード</span><code id="childPairingCode">------</code><small id="pairingCodeNote">10分間だけ有効です</small></div>
+          <div class="pairing-actions">
+            <button class="text-button" id="copyPairingCodeButton" type="button">コピー</button>
+            <button class="text-button" id="renewPairingCodeButton" type="button">作り直す</button>
+          </div>
+        </div>
         <div class="adult-gate" hidden>
           <div>
             <p class="section-label">大人の確認</p>
@@ -88,12 +136,10 @@
         <div class="celebration" aria-hidden="true"><i>★</i><i>✦</i><i>●</i><i>★</i><i>✦</i><i>●</i></div>
         <h1 id="responseTitle">おへんじが とどいたよ</h1>
         <div class="media-stage" id="mediaStage">
-          <video id="responseVideo" playsinline preload="metadata" hidden></video>
+          <video id="responseVideo" autoplay playsinline preload="metadata" hidden></video>
           <audio id="responseAudio" preload="auto" hidden></audio>
           <div class="guardian-portrait" id="guardianPortrait" hidden>
             <img id="responsePoster" alt="保護者のメッセージ画像">
-            <img class="guardian-eyes" id="responseEyes" alt="" aria-hidden="true">
-            <img class="guardian-mouth" id="responseMouth" alt="" aria-hidden="true">
           </div>
           <div class="guardian-live-badge" aria-hidden="true"><i></i><span>おはなし中</span></div>
           <div class="neutral-media" id="neutralMedia" hidden aria-hidden="true"><span>!</span></div>
@@ -104,7 +150,23 @@
           <button class="icon-button large" id="replayButton" type="button" aria-label="もう一度再生する" title="もう一度">↻</button>
           <button class="icon-button large" id="soundButton" type="button" aria-label="音声を停止する" title="音声">♪</button>
         </div>
-        <button class="primary-button" id="talkAgainButton" type="button">つづけて おはなし</button>
+        <section class="response-conversation" aria-labelledby="responseTalkLead">
+          <p id="responseTalkLead">このまま つづけて おはなしできるよ</p>
+          <div class="response-talk-row">
+            <button class="primary-button response-talk-button" id="talkAgainButton" type="button" aria-label="続けて録音を開始する">🎙 このまま おはなし</button>
+            <span class="response-timer" id="responseTimer">00:00</span>
+          </div>
+          <button class="text-button response-demo-button" id="responseDemoAudioButton" type="button">デモ音声で続ける</button>
+          <div class="response-transcript" id="responseTranscriptConfirm" hidden>
+            <label class="field-label" for="responseTranscriptInput">こう聞こえたよ</label>
+            <textarea id="responseTranscriptInput" rows="2"></textarea>
+            <div class="action-row">
+              <button class="secondary-button" id="responseRetryButton" type="button">もういちど</button>
+              <button class="primary-button" id="responseConfirmButton" type="button">これで送る</button>
+            </div>
+          </div>
+          <p class="inline-status" id="responseRecordError" role="status"></p>
+        </section>
         <button class="text-button" id="finishButton" type="button">おわる</button>
       </section>
 
@@ -141,6 +203,22 @@
         </div>
         <label class="field-label" for="guardianLabel">子どもからの呼び方</label>
         <input id="guardianLabel" class="text-input" type="text" maxlength="20" value="ママ" autocomplete="off">
+        <div class="favorite-topics-panel">
+          <label class="field-label" for="childNameInput">こどものよびかた</label>
+          <input id="childNameInput" class="text-input" type="text" maxlength="20" placeholder="れい：ひなたちゃん" autocomplete="off">
+          <label class="field-label settings-field" for="speechRateSelect">はなすはやさ</label>
+          <select id="speechRateSelect">
+            <option value="0.7">とてもゆっくり</option>
+            <option value="0.82" selected>ゆっくり</option>
+            <option value="1">ふつう</option>
+            <option value="1.12">はやめ</option>
+          </select>
+          <label class="field-label" for="favoriteTopicsInput">その子の好きなもの</label>
+          <input id="favoriteTopicsInput" class="text-input" type="text" maxlength="180" placeholder="例：恐竜、電車、プリキュア" autocomplete="off">
+          <p class="sample-note">最大5つ。「、」で区切ると、待っている間の安心できる話題に使います。</p>
+          <button class="secondary-button compact" id="saveFavoriteTopicsButton" type="button" disabled>おはなし設定を保存</button>
+          <p id="favoriteTopicsStatus" class="inline-status" role="status"></p>
+        </div>
         <div class="sample-grid">
           <label class="sample-picker" for="samplePhotoInput">
             <span class="sample-icon" aria-hidden="true">写</span>
@@ -152,43 +230,56 @@
           <div class="sample-picker voice-picker">
             <span class="sample-icon" aria-hidden="true">声</span>
             <strong>声のサンプル</strong>
-            <span id="sampleVoiceLabel">10秒まで録音</span>
-            <small class="sample-phrase">「お話ししてくれてありがとう。いつも応援しているよ。」</small>
+            <span id="sampleVoiceLabel">1〜2分がおすすめ</span>
+            <small class="sample-phrase">普段その子に話す声・間・抑揚で、下の文章を読んでください。</small>
             <button class="secondary-button compact" id="sampleRecordButton" type="button">録音する</button>
             <label class="file-link" for="sampleVoiceInput">音声を選ぶ</label>
             <input id="sampleVoiceInput" type="file" accept="audio/webm,audio/ogg,audio/wav,audio/mpeg,audio/mp4">
             <audio id="sampleVoicePreview" controls preload="metadata" hidden></audio>
           </div>
         </div>
+        <details class="sample-script" open>
+          <summary>1〜2分の読み上げ文</summary>
+          <p>「お話ししてくれてありがとう。いつも応援しているよ。うれしかったことも、悲しかったことも、ゆっくり聞かせてね。うまくできない日があっても大丈夫。少し休んでから、また一緒にやってみよう。今日あったことを、はじめから教えてくれる？あなたのお話を聞けるのを、楽しみにしているよ。大好きな遊びのお話も聞きたいな。どんなところがいちばん楽しかった？そうなんだ、よく教えてくれたね。お迎えを待つ時間が長く感じるときもあるよね。いま一緒にいる人のそばで、できそうなことをひとつ選んでみようか。絵本を読むのと、おもちゃで遊ぶの、どちらがいいかな。急がなくて大丈夫だよ。あなたのペースでお話ししてね。会えたときに、今日のお話をたくさん聞かせてね。」</p>
+        </details>
         <label class="check-row sample-consent">
           <input id="faceConsentCheck" type="checkbox">
           <span>顔写真をAIメッセージ作成に使うことに同意します</span>
         </label>
         <label class="check-row sample-consent">
           <input id="voiceConsentCheck" type="checkbox">
-          <span>声をAIメッセージ作成に使うことに同意します</span>
+          <span>声をElevenLabsへ送信し、AI音声クローンとメッセージ作成に使うことに同意します</span>
         </label>
+        <label class="check-row sample-consent">
+          <input id="externalVoiceCloningConsentCheck" type="checkbox">
+          <span>本人の声をElevenLabsへ送信し、本人声クローンを作成・利用することに同意します</span>
+        </label>
+        <p class="sample-note">本人声クローンには、静かな場所で30秒〜2分（推奨1〜2分）録音してください。</p>
         <div class="action-row sample-actions">
           <button class="primary-button" id="saveSampleButton" type="button">素材を登録</button>
           <button class="danger-button" id="deleteSampleButton" type="button" disabled>登録素材を削除</button>
         </div>
-        <p class="sample-note">登録素材はこのブラウザの保護者プロフィールに紐づけて暗号化保存されます。別のプロフィールからは参照できません。</p>
+        <div class="action-row sample-actions" id="cloneVoicePreviewArea" hidden>
+          <button class="secondary-button" id="previewCloneVoiceButton" type="button">クローン音声を確認</button>
+          <audio id="cloneVoicePreview" controls preload="none" hidden></audio>
+        </div>
+        <p class="sample-note">写真と元音声はこのブラウザの保護者プロフィールに紐づけて暗号化保存されます。音声クローンはElevenLabsに作成され、登録削除時にElevenLabs上からも削除します。</p>
         <section class="video-generation-panel" aria-labelledby="videoGenerationTitle">
           <div class="video-generation-heading">
             <div>
-              <p class="section-label">実動画</p>
-              <h4 id="videoGenerationTitle">保護者の返信動画</h4>
+              <p class="section-label">リアルタイム動画</p>
+              <h4 id="videoGenerationTitle">リアルタイムFace</h4>
             </div>
             <span class="sample-badge" id="sampleVideoBadge">未作成</span>
           </div>
           <video id="sampleVideoPreview" controls muted playsinline preload="metadata" hidden></video>
-          <p class="video-generation-copy">登録写真から、会話中に繰り返し使える約5秒の動画を作成します。返答ごとの音声と字幕は動画と同時に再生されます。</p>
+          <p class="video-generation-copy">返答音声から、待ち時間の少ない口の動き・表情・自然な身振りをリアルタイム生成します。Tavusでは、本人同意を確認した登録写真から本人Faceも作成できます。</p>
           <label class="check-row sample-consent">
             <input id="videoConsentCheck" type="checkbox">
-            <span>登録写真を外部の動画生成サービスへ送信し、返信動画を生成することに同意します</span>
+            <span id="videoConsentDescription">返信音声を外部サービスへ送信し、リアルタイム動画を生成することに同意します</span>
           </label>
-          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled>返信動画をつくる</button>
-          <p class="sample-note">生成には通常30〜90秒かかります。完成後の動画はプロフィールごとに暗号化保存されます。</p>
+          <button class="secondary-button video-generation-button" id="generateVideoButton" type="button" disabled hidden>接続を確認する</button>
+          <p class="sample-note">接続できない場合は、動かない写真とクローン音声へ自動で戻ります。写真を傾ける擬似動画は使いません。</p>
           <p id="videoGenerationStatus" class="inline-status" role="status"></p>
         </section>
         <p id="samplingStatus" class="inline-status" role="status"></p>
@@ -204,6 +295,8 @@
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
     </dialog>
 
-    <script type="module" src="/app.js?v=23"></script>
+    <script src="/vendor/liveavatar-sdk.js?v=1"></script>
+    <script src="/vendor/daily-sdk.js?v=2"></script>
+    <script type="module" src="/app.js?v=31"></script>
   </body>
 </html>

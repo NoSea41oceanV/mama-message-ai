@@ -1,36 +1,32 @@
-# 提出デモ動画
+# 説明・提出動画
 
-現在の提出候補:
+## 現状説明動画（2026-08-14）
 
-- `AI_HACK_2026_3min_demo_live_v2.webm`
-- 尺: 約2分27秒
-- 映像: VP8 / 1280x720 / 16:9
-- 音声: Opus / 48kHz / stereo / Microsoft Haruka日本語音声
-- ファイルサイズ: 約20MB
+- ファイル: `AI_HACK_2026_ohenji_current_explainer.webm`
+- 尺: 約99秒
+- 映像: WebM / VP8 / 1280x720 / 16:9
+- 音声: Opus / Microsoft Haruka 日本語ナレーション
+- サイズ: 約7.8MB
 
-## 内容
+説明内容:
 
-- ベビーシッター同席時に、子どもと離れた保護者をつなぐ利用場面
-- 保護者同意、見守る大人、AIは補助という利用原則
-- 実際に動くアプリ画面による通常会話2往復
-- 危険発話で保護者動画を出さず、シッターへ引き継ぐ安全ルート
-- 現在の実画面と、D-IDで会話ごとに口同期する次期構成の区別
-- 家庭・ベビーシッター向けMVP、価格案、保育園への展開案
+- ベビーシッター同席家庭向けMVP
+- 音声入力、動画・動的音声・字幕、複数往復
+- OrcaRouterによる返答・感情・安全判定
+- アプリ内30秒〜2分録音からElevenLabs IVCをAPI作成
+- Voice IDのプロフィール別暗号化保存と設定画面プレビュー
+- OpenAI Custom Voice経路の温存と音声キャッシュ
+- 危険・不確実・同意無効時の音声・D-ID呼び出し0回
+- 現行mainは待機動画＋別音声であり、完全口同期は未達
 
-旧版の`AI_HACK_2026_3min_demo_review.webm`は内容が古いため、提出には使用しません。
+生成方法:
 
-## 検証
+1. `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/generate-current-explainer-narration.ps1`
+2. `node scripts/build-current-explainer-video.mjs`
+3. `node scripts/validate-current-explainer-video.mjs`
 
-- 実アプリを1280x720で録画
-- 冒頭、原則、ライブデモ、次期構成、事業案、締めの代表フレームを目視
-- 146秒地点の映像をデコードでき、148秒地点に映像がないことを確認
-- VP8映像トラックとOpus音声トラックを確認
+台本・画面構成は`scripts/current-explainer-scenes.json`、描画は`scripts/current-explainer-renderer.html`で管理します。検証スクリプトは1280x720の代表フレームを`current-explainer-review/`へ出力します。
 
-## 再生成
+## 取り扱い
 
-1. `scripts/updated-demo-scenes.json`で構成とナレーションを確認する
-2. `powershell -ExecutionPolicy Bypass -File scripts/generate-updated-demo-narration.ps1`で音声を生成する
-3. `node scripts/record-live-app-demo.mjs`で最新の実画面を録画する
-4. `node scripts/build-updated-demo-video.mjs`で最終動画を合成する
-
-YouTubeへのアップロードと公開範囲の設定は、人間の最終確認後に行います。
+`docs/submission/video/`の生成物はGit管理対象外です。動画をGitHubへ直接追加せず、人間による最終確認後にYouTubeなどの提出先へアップロードしてください。動画には`.env`、APIキー、`.data`、保護者写真・録音を含めません。

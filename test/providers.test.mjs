@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import sharp from "sharp";
 
-import { createOrcaRouterProvider } from "../lib/providers/orcarouter.mjs";
+import {
+  ORCAROUTER_SYSTEM_PROMPT,
+  createOrcaRouterProvider,
+} from "../lib/providers/orcarouter.mjs";
 import {
   DidVideoProviderError,
   createDidVideoProvider,
@@ -10,7 +15,20 @@ import {
   KlingVideoProviderError,
   createKlingVideoProvider,
 } from "../lib/providers/kling-video.mjs";
+import {
+  HeyGenVideoProviderError,
+  createHeyGenVideoProvider,
+  heyGenMotionForDecision,
+} from "../lib/providers/heygen-video.mjs";
+import {
+  LIVEAVATAR_SANDBOX_AVATAR_ID,
+  LiveAvatarProviderError,
+  createLiveAvatarProvider,
+} from "../lib/providers/liveavatar.mjs";
+import { TavusProviderError, createTavusProvider } from "../lib/providers/tavus.mjs";
+import { createTavusTrainingAssetStore } from "../lib/tavus-training-assets.mjs";
 import { SttProviderError, createSttProvider } from "../lib/providers/stt.mjs";
+import { ElevenLabsError, createElevenLabsProvider } from "../lib/providers/elevenlabs.mjs";
 import {
   DEMO_FAULT_MODES,
   MediaProviderError,
@@ -31,6 +49,75 @@ const validOrcaResponse = {
 const rawPngBase64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00,
 ]).toString("base64");
+const validPngBase64 = readFileSync(new URL("../public/assets/guardian-demo.png", import.meta.url)).toString("base64");
+
+test("ElevenLabs clones a sample and synthesizes Japanese reply audio", async () => {
+  const requests = [];
+  const provider = createElevenLabsProvider({
+    env: {
+      VOICE_CLONING_PROVIDER: "elevenlabs",
+      ELEVENLABS_API_KEY: "test-key",
+      ELEVENLABS_BASE_URL: "https://api.elevenlabs.test/v1",
+      ELEVENLABS_MODEL: "eleven_multilingual_v2",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/voices/add")) {
+        return new Response(JSON.stringify({ voice_id: "voice-test-123" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(Buffer.from("ID3-elevenlabs-audio"), {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      });
+    },
+  });
+
+  const cloned = await provider.cloneVoice({
+    bytes: Buffer.from("RIFF....WAVE sample"),
+    mimeType: "audio/wav",
+    name: "Mama Message test",
+  });
+  const audio = await provider.synthesize({
+    voiceId: cloned.voiceId,
+    text: "おはなししてくれてありがとう。",
+    speed: 0.7,
+  });
+
+  assert.equal(provider.available, true);
+  assert.equal(cloned.voiceId, "voice-test-123");
+  assert.equal(requests[0].init.headers["xi-api-key"], "test-key");
+  assert.ok(requests[0].init.body instanceof FormData);
+  assert.ok(requests[0].init.body.get("files") instanceof Blob);
+  assert.match(requests[1].url, /text-to-speech\/voice-test-123/);
+  const speechBody = JSON.parse(requests[1].init.body);
+  assert.equal(speechBody.language_code, "ja");
+  assert.equal(speechBody.voice_settings.stability, 0.45);
+  assert.equal(speechBody.voice_settings.similarity_boost, 0.85);
+  assert.equal(speechBody.voice_settings.style, 0.2);
+  assert.equal(speechBody.voice_settings.use_speaker_boost, true);
+  assert.equal(speechBody.voice_settings.speed, 0.7);
+  assert.equal(audio.mimeType, "audio/mpeg");
+  assert.match(audio.bytes.toString(), /^ID3/);
+});
+
+test("ElevenLabs failures are typed and do not expose configuration", async () => {
+  const provider = createElevenLabsProvider({
+    env: { VOICE_CLONING_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: "test-key" },
+    fetchImpl: async () => new Response(JSON.stringify({ detail: { message: "quota exceeded" } }), {
+      status: 429,
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  await assert.rejects(
+    provider.synthesize({ voiceId: "voice-id", text: "こんにちは" }),
+    (error) => error instanceof ElevenLabsError
+      && error.code === "ELEVENLABS_TTS_FAILED"
+      && error.status === 429,
+  );
+});
 
 test("D-ID uploads a raw image then creates a silent idle talk", async () => {
   const requests = [];
@@ -212,6 +299,501 @@ test("D-ID is available only when selected with an HTTPS endpoint and key", asyn
   await assert.rejects(
     disabled.getTask("talk-1"),
     (error) => error instanceof DidVideoProviderError && error.code === "DID_VIDEO_NOT_CONFIGURED",
+  );
+});
+
+test("HeyGen uploads a photo and prepares a reusable Photo Avatar", async () => {
+  const requests = [];
+  const provider = createHeyGenVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "heygen",
+      HEYGEN_API_KEY: "test-key",
+      HEYGEN_BASE_URL: "https://api.heygen.test",
+    },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/v3/assets")) {
+        return new Response(JSON.stringify({ data: { asset_id: "photo-asset-1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/assets/photo-asset-1")) {
+        return new Response(JSON.stringify({ data: { url: "https://files.heygen.test/photo-asset-1.jpg" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        data: { avatar_item: { id: "photo-avatar-1", status: "completed" } },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const task = await provider.createTask({ imageBase64: validPngBase64, idempotencyKey: "avatar-job-1" });
+  assert.deepEqual(task, {
+    taskId: "photo-avatar-1",
+    providerAssetId: "photo-asset-1",
+    status: "ready",
+    prepared: true,
+    videoUrl: null,
+  });
+  assert.equal(requests[0].url, "https://api.heygen.test/v3/assets");
+  assert.equal(requests[0].init.headers["x-api-key"], "test-key");
+  assert.equal(requests[0].init.headers["Idempotency-Key"], "avatar-job-1:image");
+  assert.ok(requests[0].init.body instanceof FormData);
+  const uploadedPhoto = requests[0].init.body.get("file");
+  assert.equal(uploadedPhoto.type, "image/jpeg");
+  const uploadedMetadata = await sharp(Buffer.from(await uploadedPhoto.arrayBuffer())).metadata();
+  assert.deepEqual(
+    { width: uploadedMetadata.width, height: uploadedMetadata.height },
+    { width: 1080, height: 1350 },
+  );
+  const avatarBody = JSON.parse(requests[2].init.body);
+  assert.equal(requests[2].url, "https://api.heygen.test/v3/avatars");
+  assert.equal(avatarBody.type, "photo");
+  assert.deepEqual(avatarBody.file, { type: "url", url: "https://files.heygen.test/photo-asset-1.jpg" });
+});
+
+test("HeyGen renders ElevenLabs audio with content-matched expression and gesture", async () => {
+  const requests = [];
+  let videoPolls = 0;
+  const provider = createHeyGenVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "heygen",
+      HEYGEN_API_KEY: "test-key",
+      HEYGEN_BASE_URL: "https://api.heygen.test",
+    },
+    pollIntervalMs: 1,
+    replyTimeoutMs: 100,
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init });
+      if (url.endsWith("/v3/assets") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { asset_id: "reply-audio-1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { video_id: "reply-video-1", status: "pending" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos/reply-video-1")) {
+        videoPolls += 1;
+        return new Response(JSON.stringify({
+          data: {
+            video_id: "reply-video-1",
+            status: "completed",
+            video_url: "https://files.heygen.test/reply.mp4",
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/v3/assets/reply-audio-1") && init.method === "DELETE") {
+        return new Response(JSON.stringify({ data: { id: "reply-audio-1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const result = await provider.renderReply({
+    avatarId: "photo-avatar-1",
+    audioBytes: Buffer.from("ID3-cloned-voice"),
+    audioMimeType: "audio/mpeg",
+    decision: { supportMode: "celebrate", emotion: ["joy"] },
+    idempotencyKey: "reply-request-1",
+  });
+  assert.equal(result.status, "ready");
+  assert.equal(result.videoUrl, "https://files.heygen.test/reply.mp4");
+  assert.equal(videoPolls, 1);
+  const createRequest = requests.find(({ url, init }) => url.endsWith("/v3/videos") && init.method === "POST");
+  const body = JSON.parse(createRequest.init.body);
+  assert.equal(body.avatar_id, "photo-avatar-1");
+  assert.equal(body.audio_asset_id, "reply-audio-1");
+  assert.equal(body.aspect_ratio, "9:16");
+  assert.deepEqual(
+    { prompt: body.motion_prompt, expressiveness: body.expressiveness },
+    heyGenMotionForDecision({ supportMode: "celebrate" }),
+  );
+  assert.deepEqual(body.engine, { type: "avatar_iv" });
+  assert.ok(requests.some(({ url, init }) => url.endsWith("/v3/assets/reply-audio-1") && init.method === "DELETE"));
+});
+
+test("HeyGen falls back to real image video when a Photo Avatar has no dimensions", async () => {
+  const requests = [];
+  const provider = createHeyGenVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "heygen", HEYGEN_API_KEY: "test-key" },
+    pollIntervalMs: 1,
+    replyTimeoutMs: 100,
+    fetchImpl: async (url, init = {}) => {
+      requests.push({ url, init });
+      if (url.endsWith("/v3/assets") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { asset_id: "reply-audio-fallback" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos") && init.method === "POST") {
+        const body = JSON.parse(init.body);
+        if (body.type === "avatar") {
+          return new Response(JSON.stringify({
+            error: {
+              code: "invalid_parameter",
+              message: "Talking photo abc has missing image dimensions. Please re-upload the photo.",
+            },
+          }), { status: 400, headers: { "content-type": "application/json" } });
+        }
+        return new Response(JSON.stringify({ data: { video_id: "image-video-1", status: "pending" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos/image-video-1") && init.method === "GET") {
+        return new Response(JSON.stringify({
+          data: {
+            video_id: "image-video-1",
+            status: "completed",
+            video_url: "https://files.heygen.test/image-video-1.mp4",
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/v3/assets/reply-audio-fallback") && init.method === "DELETE") {
+        return new Response(JSON.stringify({ data: { id: "reply-audio-fallback" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const result = await provider.renderReply({
+    avatarId: "broken-photo-avatar",
+    imageAssetId: "normalized-photo-asset",
+    audioBytes: Buffer.from("ID3-cloned-voice"),
+    audioMimeType: "audio/mpeg",
+    decision: { supportMode: "celebrate" },
+    idempotencyKey: "reply-fallback-1",
+  });
+  assert.equal(result.videoUrl, "https://files.heygen.test/image-video-1.mp4");
+  const videoRequests = requests.filter(({ url, init }) => url.endsWith("/v3/videos") && init.method === "POST");
+  assert.equal(videoRequests.length, 2);
+  assert.equal(JSON.parse(videoRequests[0].init.body).type, "avatar");
+  assert.equal(videoRequests[0].init.headers["Idempotency-Key"], "reply-fallback-1:avatar");
+  assert.deepEqual(JSON.parse(videoRequests[1].init.body), {
+    type: "image",
+    image: { type: "asset_id", asset_id: "normalized-photo-asset" },
+    audio_asset_id: "reply-audio-fallback",
+    title: "Mama Message reply",
+    resolution: "720p",
+    aspect_ratio: "4:5",
+    output_format: "mp4",
+  });
+  assert.equal(videoRequests[1].init.headers["Idempotency-Key"], "reply-fallback-1:image");
+
+  await provider.renderReply({
+    avatarId: "broken-photo-avatar",
+    imageAssetId: "normalized-photo-asset",
+    audioBytes: Buffer.from("ID3-second-cloned-voice"),
+    audioMimeType: "audio/mpeg",
+    decision: { supportMode: "comfort" },
+    idempotencyKey: "reply-fallback-2",
+  });
+  const repeatedVideoRequests = requests.filter(({ url, init }) => url.endsWith("/v3/videos") && init.method === "POST");
+  assert.equal(repeatedVideoRequests.length, 3);
+  assert.equal(JSON.parse(repeatedVideoRequests[2].init.body).type, "image");
+  assert.equal(repeatedVideoRequests[2].init.headers["Idempotency-Key"], "reply-fallback-2:image");
+});
+
+test("HeyGen failures are typed without exposing provider response details", async () => {
+  const provider = createHeyGenVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "heygen", HEYGEN_API_KEY: "sensitive-key" },
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: { code: "insufficient_credits", message: "sensitive billing response" },
+    }), { status: 402, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    provider.verify(),
+    (error) => error instanceof HeyGenVideoProviderError
+      && error.code === "HEYGEN_HTTP_ERROR"
+      && error.status === 402
+      && error.providerCode === "insufficient_credits"
+      && error.providerDetail === null
+      && !error.message.includes("sensitive billing response")
+      && !error.message.includes("sensitive-key"),
+  );
+});
+
+test("HeyGen keeps only sanitized invalid-parameter detail", async () => {
+  const provider = createHeyGenVideoProvider({
+    env: { VIDEO_GENERATION_PROVIDER: "heygen", HEYGEN_API_KEY: "sensitive-key" },
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: {
+        code: "invalid_parameter",
+        message: "Invalid avatar_id 12345678901234567890123456789012; see https://private.example/path",
+        param: "avatar_id",
+      },
+    }), { status: 400, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    provider.verify(),
+    (error) => error instanceof HeyGenVideoProviderError
+      && error.providerDetail === "Invalid avatar_id [redacted]; see [url]"
+      && error.providerParam === "avatar_id"
+      && !error.providerDetail.includes("12345678901234567890123456789012")
+      && !error.providerDetail.includes("private.example"),
+  );
+});
+
+test("HeyGen preserves a sanitized render failure code for diagnostics", async () => {
+  const provider = createHeyGenVideoProvider({
+    env: {
+      VIDEO_GENERATION_PROVIDER: "heygen",
+      HEYGEN_API_KEY: "test-key",
+    },
+    pollIntervalMs: 1,
+    fetchImpl: async (url, init = {}) => {
+      if (url.endsWith("/v3/assets") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { asset_id: "reply-audio-2" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos") && init.method === "POST") {
+        return new Response(JSON.stringify({ data: { video_id: "reply-video-2", status: "pending" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/videos/reply-video-2") && init.method === "GET") {
+        return new Response(JSON.stringify({
+          data: { video_id: "reply-video-2", status: "failed", failure_code: "invalid_avatar" },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/v3/videos/reply-video-2") && init.method === "DELETE") {
+        return new Response(JSON.stringify({ data: { id: "reply-video-2" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v3/assets/reply-audio-2") && init.method === "DELETE") {
+        return new Response(JSON.stringify({ data: { id: "reply-audio-2" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  await assert.rejects(
+    provider.renderReply({
+      avatarId: "photo-avatar-2",
+      audioBytes: Buffer.from("ID3-cloned-voice"),
+      audioMimeType: "audio/mpeg",
+      decision: { supportMode: "comfort" },
+    }),
+    (error) => error instanceof HeyGenVideoProviderError
+      && error.code === "HEYGEN_VIDEO_FAILED"
+      && error.providerCode === "invalid_avatar",
+  );
+});
+
+test("LiveAvatar creates a sandbox LITE token without exposing the API key", async () => {
+  let request;
+  const provider = createLiveAvatarProvider({
+    env: {
+      LIVEAVATAR_API_KEY: "liveavatar-secret",
+      LIVEAVATAR_SANDBOX: "true",
+      LIVEAVATAR_BASE_URL: "https://api.liveavatar.test",
+    },
+    fetchImpl: async (url, init) => {
+      request = { url, init, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        code: 1000,
+        data: { session_id: "session-1", session_token: "short-lived-token" },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const result = await provider.createSessionToken();
+  assert.equal(provider.available, true);
+  assert.equal(provider.status().status, "sandbox");
+  assert.equal(request.url, "https://api.liveavatar.test/v1/sessions/token");
+  assert.equal(request.init.headers["X-API-KEY"], "liveavatar-secret");
+  assert.deepEqual(request.body, {
+    mode: "LITE",
+    is_sandbox: true,
+    avatar_id: LIVEAVATAR_SANDBOX_AVATAR_ID,
+    video_settings: { quality: "high", encoding: "H264" },
+    max_session_duration: 60,
+  });
+  assert.deepEqual(result, {
+    sessionToken: "short-lived-token",
+    sessionId: "session-1",
+    apiUrl: "https://api.liveavatar.test",
+    maxSessionDuration: 60,
+  });
+  assert.equal(JSON.stringify(provider.status()).includes("liveavatar-secret"), false);
+});
+
+test("LiveAvatar requires a custom avatar outside sandbox and keeps failures typed", async () => {
+  const missingAvatar = createLiveAvatarProvider({
+    env: { LIVEAVATAR_API_KEY: "secret", LIVEAVATAR_SANDBOX: "false" },
+  });
+  assert.equal(missingAvatar.available, false);
+  assert.equal(missingAvatar.status().status, "avatar_required");
+  await assert.rejects(
+    missingAvatar.createSessionToken(),
+    (error) => error instanceof LiveAvatarProviderError && error.code === "LIVEAVATAR_AVATAR_REQUIRED",
+  );
+
+  const rejected = createLiveAvatarProvider({
+    env: {
+      LIVEAVATAR_API_KEY: "secret",
+      LIVEAVATAR_SANDBOX: "false",
+      LIVEAVATAR_AVATAR_ID: "11111111-1111-4111-8111-111111111111",
+    },
+    fetchImpl: async () => new Response(JSON.stringify({ code: "invalid_api_key", message: "private detail" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  await assert.rejects(
+    rejected.createSessionToken(),
+    (error) => error instanceof LiveAvatarProviderError
+      && error.code === "LIVEAVATAR_HTTP_ERROR"
+      && error.status === 401
+      && error.providerCode === "invalid_api_key"
+      && !error.message.includes("private detail"),
+  );
+});
+
+test("Tavus creates a private Echo conversation without exposing its API key", async () => {
+  let request;
+  const provider = createTavusProvider({
+    env: {
+      TAVUS_API_KEY: "tavus-secret",
+      TAVUS_BASE_URL: "https://api.tavus.test",
+      TAVUS_PAL_ID: "pal-echo",
+      TAVUS_FACE_ID: "face-public",
+    },
+    fetchImpl: async (url, init) => {
+      request = { url, init, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        conversation_id: "conversation-1",
+        conversation_url: "https://room.daily.co/conversation-1",
+        meeting_token: "short-lived-meeting-token",
+        status: "active",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  const result = await provider.createConversation();
+  assert.equal(provider.streamingAvailable, true);
+  assert.equal(provider.available, false);
+  assert.equal(provider.taskPollTimeoutMs, 5 * 60 * 60 * 1000);
+  assert.equal(provider.recoverTimedOutTasks, true);
+  assert.equal(request.url, "https://api.tavus.test/v2/conversations");
+  assert.equal(request.init.headers["x-api-key"], "tavus-secret");
+  assert.deepEqual(request.body, {
+    face_id: "face-public",
+    pal_id: "pal-echo",
+    conversation_name: "Mama Message",
+    audio_only: false,
+    require_auth: true,
+    max_participants: 2,
+    properties: {
+      max_call_duration: 300,
+      participant_left_timeout: 5,
+      participant_absent_timeout: 30,
+    },
+  });
+  assert.equal(result.meetingToken, "short-lived-meeting-token");
+  assert.equal(JSON.stringify(provider.status()).includes("tavus-secret"), false);
+});
+
+test("Tavus trains and deletes a Face through a short-lived public image URL", async () => {
+  const requests = [];
+  const deletedAssets = [];
+  const provider = createTavusProvider({
+    env: {
+      TAVUS_API_KEY: "test-key",
+      TAVUS_BASE_URL: "https://api.tavus.test",
+      TAVUS_PAL_ID: "pal-echo",
+      TAVUS_FACE_ID: "face-public",
+    },
+    publishImage: async () => ({ assetId: "asset-1", url: "https://app.test/api/tavus/training-assets/asset-1" }),
+    deletePublishedImage: async (assetId) => { deletedAssets.push(assetId); return true; },
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init, body: init.body ? JSON.parse(init.body) : null });
+      if (url.endsWith("/v2/faces") && init.method === "POST") {
+        return new Response(JSON.stringify({ face_id: "face-custom", status: "started" }), { status: 200 });
+      }
+      if (url.endsWith("/v2/faces/face-custom") && init.method === "GET") {
+        return new Response(JSON.stringify({ face_id: "face-custom", status: "completed" }), { status: 200 });
+      }
+      if (url.endsWith("/v2/faces/face-custom?hard=true") && init.method === "DELETE") {
+        return new Response("{}", { status: 200 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    },
+  });
+
+  const created = await provider.createTask({ imageBase64: rawPngBase64, mimeType: "image/png", idempotencyKey: "job-1" });
+  assert.deepEqual(created, { taskId: "face-custom", providerAssetId: "asset-1", status: "queued" });
+  assert.equal(requests[0].body.train_image_url, "https://app.test/api/tavus/training-assets/asset-1");
+  assert.equal(requests[0].body.voice_name, "anna");
+  assert.equal(requests[0].body.auto_fix_training_image, true);
+  const ready = await provider.getTask("face-custom");
+  assert.equal(ready.status, "ready");
+  assert.equal(ready.prepared, true);
+  assert.equal(ready.cleanupProviderAsset, true);
+  assert.equal(await provider.deleteAsset("asset-1"), true);
+  assert.deepEqual(deletedAssets, ["asset-1"]);
+  assert.equal(await provider.deleteTask("face-custom"), true);
+  assert.equal(requests.at(-1).url, "https://api.tavus.test/v2/faces/face-custom?hard=true");
+});
+
+test("Tavus training assets require a public HTTPS origin and erase bytes on delete", async () => {
+  const disabled = createTavusTrainingAssetStore({ publicBaseUrl: "http://127.0.0.1:4173" });
+  assert.equal(disabled.configured, false);
+  await assert.rejects(disabled.publish({ imageBase64: rawPngBase64, mimeType: "image/png" }), /TAVUS_PUBLIC_URL_REQUIRED/);
+
+  const store = createTavusTrainingAssetStore({
+    publicBaseUrl: "https://app.example.test/",
+    idFactory: () => "unguessable-test-token",
+  });
+  const published = await store.publish({ imageBase64: rawPngBase64, mimeType: "image/png" });
+  assert.equal(published.url, "https://app.example.test/api/tavus/training-assets/unguessable-test-token");
+  assert.equal(store.read(published.assetId).mimeType, "image/png");
+  assert.equal(await store.deleteAsset(published.assetId), true);
+  assert.equal(store.read(published.assetId), null);
+});
+
+test("Tavus keeps provider failures typed and hides response details", async () => {
+  const provider = createTavusProvider({
+    env: {
+      TAVUS_API_KEY: "sensitive-key",
+      TAVUS_BASE_URL: "https://api.tavus.test",
+      TAVUS_PAL_ID: "pal-echo",
+      TAVUS_FACE_ID: "face-public",
+    },
+    fetchImpl: async () => new Response(JSON.stringify({ error: "Invalid API key sensitive-key" }), {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    }),
+  });
+  await assert.rejects(
+    provider.createConversation(),
+    (error) => error instanceof TavusProviderError
+      && error.code === "TAVUS_HTTP_ERROR"
+      && error.status === 401
+      && !error.message.includes("sensitive-key"),
   );
 });
 
@@ -403,6 +985,8 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   });
   const result = await provider.classifyAndReply({
     transcript: "ブロックでおうちを作れたよ",
+    favoriteTopics: ["恐竜", "電車"],
+    childName: "ひなたちゃん",
     history: [
       { role: "user", content: "きのうはタワーを作ったよ" },
       { role: "assistant", content: "高くできたんだね。" },
@@ -415,7 +999,16 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.equal(request.body.response_format.json_schema.strict, true);
   assert.equal(request.body.response_format.json_schema.schema.additionalProperties, false);
   assert.deepEqual(request.body.response_format.json_schema.schema.required, Object.keys(validOrcaResponse));
+  assert.equal(request.body.messages[0].content, ORCAROUTER_SYSTEM_PROMPT);
+  assert.match(request.body.messages[0].content, /「今日暇？」→ normal/);
+  assert.match(request.body.messages[0].content, /短い、くだけている、意図が少し曖昧という理由だけで/);
+  assert.match(request.body.messages[0].content, /質問は多くても1つ/);
+  assert.match(request.body.messages[0].content, /分離不安だけを理由に adult_handoff にしない/);
+  assert.match(request.body.messages[0].content, /「すぐ迎えに行く」「もうすぐ着く」/);
+  assert.match(request.body.messages[0].content, /ひらがなと句読点だけ/);
   assert.deepEqual(request.body.messages.slice(1), [
+    { role: "system", content: "登録された好きなもの: 恐竜、電車。必要なときだけ、この中から一つを自然な安心材料や遊びの話題として使ってください。" },
+    { role: "system", content: "こどものよびかた: ひなたちゃん。必要なときだけ、この呼び方で自然に呼びかけてください。" },
     { role: "user", content: "きのうはタワーを作ったよ" },
     { role: "assistant", content: "高くできたんだね。" },
     { role: "user", content: "ブロックでおうちを作れたよ" },
@@ -423,7 +1016,69 @@ test("OrcaRouter sends strict structured output and captures metadata", async ()
   assert.equal(result.replyText, validOrcaResponse.replyText);
   assert.equal(result.metadata.resolvedModel, "provider/header-model");
   assert.equal(result.metadata.usage.total_tokens, 50);
+  assert.equal(result.metadata.favoriteTopicsCount, 2);
+  assert.equal(result.metadata.childNameConfigured, true);
   assert.equal(result.metadata.headers["x-orca-request-id"], "orca-request-1");
+});
+
+test("OrcaRouter uses the Responses API for GPT-5.6 models", async () => {
+  let request;
+  const provider = createOrcaRouterProvider({
+    env: {
+      ROUTER_PROVIDER: "orcarouter",
+      ORCAROUTER_API_KEY: "secret",
+      ORCAROUTER_MODEL: "openai/gpt-5.6-luna",
+    },
+    fetchImpl: async (url, init) => {
+      request = { url, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({
+        id: "resp_luna_1",
+        model: "openai/gpt-5.6-luna",
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(validOrcaResponse) }] }],
+        usage: { input_tokens: 24, output_tokens: 32 },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const result = await provider.classifyAndReply("ママに会いたい");
+  assert.equal(request.url, "https://api.orcarouter.ai/v1/responses");
+  assert.equal(request.body.model, "openai/gpt-5.6-luna");
+  assert.equal(request.body.text.format.type, "json_schema");
+  assert.equal(request.body.text.format.strict, true);
+  assert.equal(request.body.reasoning.effort, "low");
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.resolvedModel, "openai/gpt-5.6-luna");
+});
+
+test("OrcaRouter falls back from unavailable Luna to GPT-5.6 Terra", async () => {
+  const requestedModels = [];
+  const provider = createOrcaRouterProvider({
+    env: {
+      ROUTER_PROVIDER: "orcarouter",
+      ORCAROUTER_API_KEY: "secret",
+      ORCAROUTER_MODEL: "openai/gpt-5.6-luna",
+      ORCAROUTER_FALLBACK_MODEL: "openai/gpt-5.6-terra",
+    },
+    fetchImpl: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      requestedModels.push(body.model);
+      if (body.model.endsWith("luna")) {
+        return new Response(JSON.stringify({ error: { message: "temporarily unavailable" } }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        model: "openai/gpt-5.6-terra",
+        output: [{ type: "message", content: [{ type: "output_text", text: JSON.stringify(validOrcaResponse) }] }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const result = await provider.classifyAndReply("ママに会いたい");
+  assert.deepEqual(requestedModels, ["openai/gpt-5.6-luna", "openai/gpt-5.6-terra"]);
+  assert.equal(result.ok, true);
+  assert.equal(result.metadata.fallback, true);
+  assert.equal(result.metadata.primaryModel, "openai/gpt-5.6-luna");
+  assert.equal(result.metadata.resolvedModel, "openai/gpt-5.6-terra");
 });
 
 test("OrcaRouter fails closed on invalid JSON", async () => {

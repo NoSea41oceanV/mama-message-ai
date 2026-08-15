@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:liveavatar-sdk": "esbuild node_modules/@heygen/liveavatar-web-sdk/lib/index.esm.js --bundle --format=iife --global-name=LiveAvatarSDK --platform=browser --target=es2022 --minify --outfile=public/vendor/liveavatar-sdk.js",
+    "build:daily-sdk": "node scripts/build-daily-sdk.mjs",
+    "build:browser-sdks": "npm run build:liveavatar-sdk && npm run build:daily-sdk",
+    "prestart": "npm run build:browser-sdks",
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "test": "node --test",
@@ -11,5 +15,13 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@daily-co/daily-js": "0.92.0",
+    "@heygen/liveavatar-web-sdk": "^0.0.18",
+    "esbuild": "^0.25.9",
+    "kuroshiro": "^1.2.0",
+    "kuroshiro-analyzer-kuromoji": "^1.1.0",
+    "sharp": "^0.35.3"
   }
 }

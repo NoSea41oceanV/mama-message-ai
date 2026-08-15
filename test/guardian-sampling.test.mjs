@@ -49,6 +49,75 @@ test("sampling registration requires both explicit approvals and hides raw media
   assert.equal(JSON.stringify(status).includes(wav.toString("base64")), false);
 });
 
+test("trusted ElevenLabs clone metadata is available without exposing the voice ID", () => {
+  const store = createGuardianSamplingStore();
+  const status = store.register(validRegistration(), {
+    voiceClone: { provider: "elevenlabs", voiceId: "private-voice-id" },
+  });
+  assert.equal(status.voiceCloningAvailable, true);
+  assert.doesNotMatch(JSON.stringify(status), /private-voice-id/);
+  const resolved = store.resolve(status.consentId, status.avatarAssetId);
+  assert.deepEqual(resolved.voiceClone, { provider: "elevenlabs", voiceId: "private-voice-id" });
+});
+
+test("favorite topics are normalized and update without replacing guardian media", () => {
+  const store = createGuardianSamplingStore();
+  const first = store.register(validRegistration({
+    favoriteTopics: ["恐竜", " 電車 ", "恐竜", "", "プリキュア"],
+  }));
+  const before = store.resolve(first.consentId, first.avatarAssetId);
+  assert.deepEqual(first.favoriteTopics, ["恐竜", "電車", "プリキュア"]);
+  const updated = store.updatePreferences({
+    favoriteTopics: "ブロック、動物\n絵本",
+    childName: " ひなたちゃん ",
+    speechRate: 0.7,
+  });
+  const after = store.resolve(updated.consentId, updated.avatarAssetId);
+  assert.deepEqual(updated.favoriteTopics, ["ブロック", "動物", "絵本"]);
+  assert.deepEqual(after.favoriteTopics, ["ブロック", "動物", "絵本"]);
+  assert.equal(updated.childName, "ひなたちゃん");
+  assert.equal(after.childName, "ひなたちゃん");
+  assert.equal(updated.speechRate, 0.7);
+  assert.equal(after.speechRate, 0.7);
+  assert.equal(after.photo, before.photo);
+  assert.equal(after.voice, before.voice);
+  assert.equal(updated.consentId, first.consentId);
+});
+
+test("child calling name and speech rate use safe bounded defaults", () => {
+  const store = createGuardianSamplingStore();
+  const first = store.register(validRegistration({ childName: "あおいちゃん", speechRate: 99 }));
+  assert.equal(first.childName, "あおいちゃん");
+  assert.equal(first.speechRate, 1.2);
+  const updated = store.updatePreferences({ speechRate: "invalid" });
+  assert.equal(updated.childName, "あおいちゃん");
+  assert.equal(updated.speechRate, 0.82);
+});
+
+test("voice-only replacement preserves the guardian photo and consent identifiers", () => {
+  const store = createGuardianSamplingStore();
+  const first = store.register(validRegistration(), {
+    voiceClone: { provider: "elevenlabs", voiceId: "voice-old" },
+  });
+  const before = store.resolve(first.consentId, first.avatarAssetId);
+  const previousVoice = before.voice.bytes;
+  const updated = store.replaceVoice({
+    voiceBase64: wav.toString("base64"),
+    voiceType: "audio/wav",
+    voiceDurationSeconds: 120,
+    voiceApproved: true,
+  }, {
+    voiceClone: { provider: "elevenlabs", voiceId: "voice-new" },
+  });
+  const after = store.resolve(updated.consentId, updated.avatarAssetId);
+  assert.equal(updated.consentId, first.consentId);
+  assert.equal(updated.avatarAssetId, first.avatarAssetId);
+  assert.equal(after.photo, before.photo);
+  assert.equal(after.voice.durationSeconds, 120);
+  assert.equal(after.voiceClone.voiceId, "voice-new");
+  assert.equal(previousVoice.every((byte) => byte === 0), true);
+});
+
 test("sampling registration rejects MIME spoofing and long voice samples", () => {
   const store = createGuardianSamplingStore();
   assert.throws(
@@ -56,7 +125,7 @@ test("sampling registration rejects MIME spoofing and long voice samples", () =>
     (error) => error.code === "PHOTO_CONTENT_INVALID",
   );
   assert.throws(
-    () => store.register(validRegistration({ voiceDurationSeconds: 31 })),
+    () => store.register(validRegistration({ voiceDurationSeconds: 121 })),
     (error) => error.code === "VOICE_DURATION_INVALID",
   );
   assert.throws(

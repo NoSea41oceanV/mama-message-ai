@@ -55,7 +55,7 @@ APIキーや保護者素材はコミットしません。実値は各自の `.en
 Node.jsアプリとして、次のMUST経路を実装しています。
 
 - 本人同意済みデモ素材のサーバー検証
-- 大人向け画面での保護者写真・最大2分（1〜2分推奨）の音声サンプル登録、ElevenLabs Instant Voice Clone、顔・声ごとの明示同意、プレビュー、プロフィール別の永続保存・削除
+- 大人向け画面での保護者写真・8場面×3文のガイド録音（最大6分・20MB）、ブラウザ内WAV結合、ElevenLabs Instant Voice Clone、顔・声ごとの明示同意、プレビュー、プロフィール別の永続保存・削除
 - Tavus Echoで、返答ごとのElevenLabs音声・表情・身振り・口の動きを同期するリアルタイム映像
 - Tavusへの明示同意、非公開Daily通話の短時間トークン、APIによる本人Face作成、音声フォールバック
 - 代替経路としてLiveAvatar LITEのリアルタイム映像
@@ -78,7 +78,7 @@ Node.jsアプリとして、次のMUST経路を実装しています。
 - 通常・生成失敗・安全・同意不備・冪等性・ログ秘匿を含む自動テスト
 - CSP、Permissions Policy、入力長制限、危険・誤認表現の返答拒否
 
-既定起動はキー不要のデモモードです。`VOICE_CLONING_PROVIDER=elevenlabs`を設定した実接続では、大人向け画面から保護者の写真と最大2分（1〜2分推奨）の音声を登録すると、ElevenLabs Instant Voice Cloneの`voice_id`を作成します。Tavusモードの会話時は、OrcaRouterの返答文をElevenLabsの日本語TTSへ送り、24kHz・16-bit・mono PCMへ変換してTavus Echoへ渡します。Tavusに接続できない場合は、登録写真とクローン音声を使うLEVEL 3へ戻ります。
+既定起動はキー不要のデモモードです。`VOICE_CLONING_PROVIDER=elevenlabs`と`SPEECH_PROVIDER=elevenlabs`を設定した実接続では、大人向け画面で8場面×3文を1文ずつ録音します。24クリップはブラウザ内で16kHz・mono WAVへ結合され、ElevenLabs Instant Voice Cloneへの登録は1回だけ行われます。Tavusモードの会話時は、OrcaRouterの返答文をElevenLabsの日本語TTSへ送り、24kHz・16-bit・mono PCMへ変換してTavus Echoへ渡します。Tavusに接続できない場合は、登録写真とクローン音声を使うLEVEL 3へ戻ります。
 
 写真、元音声、生成MP4、ElevenLabsの`voice_id`はブラウザが保持するランダムな保護者プロフィールIDごとに分離し、サーバー専用の `.data` へAES-256-GCMで暗号化保存します。APIキーと`voice_id`はブラウザへ返しません。同じブラウザではサーバー再起動後も自動復元され、別プロフィールからは参照できません。素材の再登録・削除・同意停止では生成動画を含む暗号化データと素材URLを失効させ、削除時はElevenLabs上のクローン削除も試みます。TavusのAPIキーもサーバーだけが保持し、ブラウザへ返すのは同意確認後に発行した非公開通話の短時間トークンだけです。
 
@@ -99,12 +99,13 @@ npm start
 
 ブラウザで `http://127.0.0.1:4173` を開きます。マイク権限を使わずに確認する場合は、画面の「デモ音声で進める」を選択します。
 
-実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。会話判定は`ROUTER_PROVIDER=orcarouter`、リアルタイム映像は`VIDEO_GENERATION_PROVIDER=tavus`、実STTは必要に応じて`STT_PROVIDER=openai`を指定してください。動画処理は大人向け画面で外部送信同意を確認した場合だけ開始されます。`VIDEO_GENERATION_PROVIDER=disabled`へ戻すとキーが残っていても写真・返信音声を動画サービスへ送信しません。
+実接続する場合は`.env.example`を参考に、Git管理対象外の`.env`へサーバー専用キーを設定します。会話判定は`ROUTER_PROVIDER=orcarouter`、クローン作成と本人声TTSは`VOICE_CLONING_PROVIDER=elevenlabs`と`SPEECH_PROVIDER=elevenlabs`、リアルタイム映像は`VIDEO_GENERATION_PROVIDER=tavus`、実STTは必要に応じて`STT_PROVIDER=openai`を指定してください。動画処理は大人向け画面で外部送信同意を確認した場合だけ開始されます。`VIDEO_GENERATION_PROVIDER=disabled`へ戻すとキーが残っていても写真・返信音声を動画サービスへ送信しません。
 
 ### ElevenLabs音声クローンの設定
 
 ```dotenv
 VOICE_CLONING_PROVIDER=elevenlabs
+SPEECH_PROVIDER=elevenlabs
 ELEVENLABS_API_KEY=YOUR_SERVER_SIDE_API_KEY
 ELEVENLABS_BASE_URL=https://api.elevenlabs.io/v1
 ELEVENLABS_MODEL=eleven_multilingual_v2
@@ -114,7 +115,7 @@ ELEVENLABS_STYLE=0.2
 ELEVENLABS_SPEAKER_BOOST=true
 ```
 
-保護者素材画面で1〜2分、普段その子に話すときの速さ・抑揚・間で自然に読み上げ、外部送信を含む声の利用同意を確認して登録します。登録完了後に「音声クローン済み」と表示されれば、次の通常返答からクローン音声が使われます。TTS時は録音の話し方を残しやすい既定値として、安定性`0.45`、類似度`0.85`、スタイル`0.2`、話者ブースト有効を使います。APIキーはサーバーだけが参照し、ブラウザやAPIレスポンスへ返しません。
+保護者素材画面で、ほめる・悲しい・落ち着かせる・励ます・切り替える・基本欲求・話を聞く・聞き返す、の8場面を各3文ずつ普段の言い方で読みます。全体は4〜6分、最大6分・20MBが目安です。録音後は外部送信を含む声の利用同意を確認して登録します。登録完了後に「音声クローン済み」と表示されれば、次の通常返答からクローン音声が使われます。語尾・口癖・場面別の言い方も保存され、OrcaRouterへ安全方針を優先する補助情報として渡されます。TTS時は安定性`0.45`、類似度`0.85`、スタイル`0.2`、話者ブースト有効を使います。APIキーはサーバーだけが参照し、ブラウザやAPIレスポンスへ返しません。
 
 ### Tavusの設定
 
@@ -157,7 +158,7 @@ HEYGEN_RESPONSE_TIMEOUT_SECONDS=180
 
 大人向け画面で写真・返信音声の外部送信へ同意し、「本人アバターを準備する」を押します。準備完了後は、通常返答ごとにElevenLabs音声をHeyGenへ一時アップロードし、`supportMode`に応じた短い`motion_prompt`と表現強度を指定します。生成済み返信動画はサーバーへ取り込んでから配信し、HeyGenへ送った一時音声アセットと生成動画は取り込み後に削除を試みます。安全引き継ぎでは本人動画を生成しません。
 
-### D-ID無料トライアルの設定
+### 旧D-ID経路を明示的に試す場合
 
 1. [D-ID Studio](https://studio.d-id.com/)でトライアルアカウントを作成します。
 2. StudioのAccount settingsでAPI keyを発行し、一度だけ表示される`API_USERNAME:API_PASSWORD`を安全な場所へ保存します。

@@ -1,5 +1,7 @@
 # AIビデオメッセージ 要件定義書
 
+> **履歴資料:** これは初期スコープを記録した文書です。現在はOrcaRouterの構造化判定、ElevenLabs本人声、Tavus Echo、複数往復、大人確認チャットを採用しています。現行仕様は[README](../../README.md)と[実装変更一覧](../IMPLEMENTATION_CHANGES.md)を参照してください。
+
 更新日: 2026-08-13  
 提出期限: 2026-08-15 15:00 JST  
 対象: AI HACK 2026 MVP

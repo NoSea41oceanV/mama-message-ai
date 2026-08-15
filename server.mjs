@@ -423,26 +423,6 @@ const routerProvider = createOrcaRouterProvider({
   localReplyBuilder: routerMode === "demo" ? buildReply : undefined,
 });
 const sttProvider = createSttProvider();
-const demoReplyAudioUrls = Object.freeze({
-  celebrate: "/assets/audio/celebrate.wav",
-  comfort: "/assets/audio/comfort.wav",
-  calm: "/assets/audio/calm.wav",
-  encourage: "/assets/audio/encourage.wav",
-  transition: "/assets/audio/transition.wav",
-  basic_need: "/assets/audio/basic_need.wav",
-  listen: "/assets/audio/listen.wav",
-  clarify: "/assets/audio/clarify.wav",
-});
-const demoReplyVideoUrls = Object.freeze({
-  celebrate: "/assets/video/celebrate.webm",
-  comfort: "/assets/video/comfort.webm",
-  calm: "/assets/video/calm.webm",
-  encourage: "/assets/video/encourage.webm",
-  transition: "/assets/video/transition.webm",
-  basic_need: "/assets/video/basic_need.webm",
-  listen: "/assets/video/listen.webm",
-  clarify: "/assets/video/clarify.webm",
-});
 const storedGeneratedVideoProvider = Object.freeze({
   name: "guardian-reply-video",
   generate: async (context) => context.generatedReplyVideoUrl
@@ -468,12 +448,11 @@ const mediaProvider = createMediaProvider({
     posterUrl: "/assets/guardian-demo.png",
   },
   timeoutMs: Math.min(Number(process.env.MEDIA_TIMEOUT_SECONDS || 18), 18) * 1000,
-  preRecordedVideoUrlForDecision: (decision) => routerMode === "demo"
-    ? demoReplyVideoUrls[decision.supportMode] ?? null
-    : null,
-  audioUrlForDecision: (decision) => routerMode === "demo"
-    ? demoReplyAudioUrls[decision.supportMode] ?? null
-    : null,
+  // A fixed recording cannot represent a dynamically generated reply. The
+  // default demo therefore falls through to poster + browser speech so the
+  // spoken sentence always matches the subtitle.
+  preRecordedVideoUrlForDecision: () => null,
+  audioUrlForDecision: () => null,
 });
 const neutralMediaProvider = createMediaProvider({
   provider: "demo",

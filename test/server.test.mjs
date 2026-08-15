@@ -201,9 +201,15 @@ test("classifies transition anxiety and basic needs", async () => {
   assert.equal(classifyTranscript("保育園に行きたくない").supportMode, "transition");
   assert.equal(classifyTranscript("おなかすいた").supportMode, "basic_need");
   const transition = await createAndWait({ confirmedTranscript: "保育園に行きたくない" });
-  assert.equal(transition.result.responseBundle.videoUrl, "/assets/video/transition.webm");
+  assert.equal(transition.result.responseBundle.videoUrl, null);
+  assert.equal(transition.result.responseBundle.audioUrl, null);
+  assert.equal(transition.result.responseBundle.speechSynthesis, true);
+  assert.equal(transition.result.responseBundle.subtitle, transition.result.replyText);
   const basicNeed = await createAndWait({ confirmedTranscript: "おなかすいた" });
-  assert.equal(basicNeed.result.responseBundle.videoUrl, "/assets/video/basic_need.webm");
+  assert.equal(basicNeed.result.responseBundle.videoUrl, null);
+  assert.equal(basicNeed.result.responseBundle.audioUrl, null);
+  assert.equal(basicNeed.result.responseBundle.speechSynthesis, true);
+  assert.equal(basicNeed.result.responseBundle.subtitle, basicNeed.result.replyText);
 });
 
 test("rejects unsafe or deceptive generated replies", () => {
@@ -276,11 +282,12 @@ test("runs transcription and response contracts end to end", async () => {
   assert.deepEqual(ready.emotion, ready.routerDecision.emotion);
   assert.equal(ready.responseBundle.ready, true);
   assert.deepEqual(ready.bundle, ready.responseBundle);
-  assert.equal(ready.responseBundle.tier, "PRE_RECORDED_VIDEO");
-  assert.match(ready.responseBundle.videoUrl, /^\/assets\/video\/.+\.webm$/);
-  assert.equal(ready.responseBundle.audioInVideo, true);
-  assert.equal(ready.responseBundle.speechSynthesis, false);
+  assert.equal(ready.responseBundle.tier, "STILL_AUDIO");
+  assert.equal(ready.responseBundle.videoUrl, null);
+  assert.equal(ready.responseBundle.audioUrl, null);
+  assert.equal(ready.responseBundle.speechSynthesis, true);
   assert.ok(ready.responseBundle.subtitle);
+  assert.equal(ready.responseBundle.subtitle, ready.replyText);
 });
 
 test("serves deterministic demo reply audio", async () => {

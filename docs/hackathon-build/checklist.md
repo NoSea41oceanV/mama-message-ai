@@ -1,5 +1,7 @@
 # AI HACK 2026 Build Checklist
 
+> **履歴資料:** 各チェックとQwen実測値は実施当時の記録です。現在の主構成・モデル・デモ完了条件は[README](../../README.md)と[最終レビューチェックリスト](../submission/FINAL_REVIEW_CHECKLIST.md)を参照してください。
+
 Mode: Codex実行・人間レビュー型  
 Verification: Codexの自動確認 + 人間の10〜15分レビュー  
 Git cadence: 15〜30分単位のコミット  

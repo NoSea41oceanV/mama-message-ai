@@ -238,8 +238,8 @@ test("gives truthful co-regulation replies for separation distress", () => {
     "お迎えを待つの、長く感じるよね。先生に時間を聞いて、待つあいだ何をするか一緒に決めようね。",
   );
   assert.equal(
-    buildSeparationReply("パパといるけどママがいなくて泣いちゃう"),
-    "泣いても大丈夫だよ。ママに会いたくなったんだね。パパのそばで、ゆっくり三つ数えてみようね。",
+    buildSeparationReply("せんせいといるけどママがいなくて泣いちゃう"),
+    "泣いても大丈夫だよ。ママに会いたくなったんだね。先生のそばで、ゆっくり三つ数えてみようね。",
   );
 });
 

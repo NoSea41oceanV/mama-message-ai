@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#42bdf0">
-    <meta name="description" content="子どもの声に、本人同意済みの保護者AIアバターで返すデモアプリ">
+    <meta name="description" content="延長保育・一時預かりで、保育士やベビーシッターと使う保護者AIビデオメッセージ">
     <title>おへんじ</title>
     <link rel="stylesheet" href="/styles.css?v=29">
   </head>
@@ -37,7 +37,7 @@
 
       <section class="screen guardian-login-screen" data-screen="guardian-login" aria-labelledby="guardianLoginTitle">
         <p class="section-label">大人確認用</p>
-        <h1 id="guardianLoginTitle">家庭の会話を<br>確認する</h1>
+        <h1 id="guardianLoginTitle">預かり中の会話を<br>確認する</h1>
         <p class="lead">子ども側に表示された6桁コードと、大人用確認コードを入力してください。</p>
         <form class="guardian-login-card" id="guardianLoginForm">
           <label class="field-label" for="guardianPairingCode">6桁のペアリングコード</label>
@@ -87,8 +87,8 @@
           </label>
           <label class="field-label" for="demoScenario">デモ入力</label>
           <select id="demoScenario">
+            <option value="ママにあいたい。おむかえまだ？">主デモ：延長保育でさみしい</option>
             <option value="きょうブロックでおうちを作ったよ">通常成功：できたこと</option>
-            <option value="ママに会えなくてさみしいの">通常成功：さみしい</option>
             <option value="きょうブロックでおうちを作ったよ" data-demo-fault="media-unavailable">生成失敗：中立案内へ切替</option>
             <option value="知らない人がいて怖い、助けて">安全対応：大人へ引き継ぐ</option>
           </select>

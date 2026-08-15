@@ -68,13 +68,6 @@
         </div>
         <h1 id="setupTitle">いっしょに<br>おはなししよう</h1>
         <p class="lead">きょうのこと、きかせてね</p>
-        <div class="family-share-card">
-          <div><span>離れた大人に伝える6桁コード</span><code id="childPairingCode">------</code><small id="pairingCodeNote">10分間だけ有効です</small></div>
-          <div class="pairing-actions">
-            <button class="text-button" id="copyPairingCodeButton" type="button">コピー</button>
-            <button class="text-button" id="renewPairingCodeButton" type="button">作り直す</button>
-          </div>
-        </div>
         <div class="adult-gate" hidden>
           <div>
             <p class="section-label">大人の確認</p>
@@ -343,6 +336,16 @@
         <button class="secondary-button" id="restoreConsent" type="button">デモ同意を再開</button>
       </div>
       <p id="consentAdminStatus" role="status"></p>
+      <section class="settings-pairing-section" aria-labelledby="settingsPairingTitle">
+        <h3 id="settingsPairingTitle">離れた大人との接続</h3>
+        <div class="family-share-card">
+          <div><span>大人の確認画面で入力する6桁コード</span><code id="childPairingCode">------</code><small id="pairingCodeNote">10分間だけ有効です</small></div>
+          <div class="pairing-actions">
+            <button class="text-button" id="copyPairingCodeButton" type="button">コピー</button>
+            <button class="text-button" id="renewPairingCodeButton" type="button">作り直す</button>
+          </div>
+        </div>
+      </section>
       <dl class="decision-list" id="decisionList"><dt>状態</dt><dd>まだ判定していません</dd></dl>
       <h3>匿名技術ログ</h3>
       <div class="log-list" id="logList"><p>ログはまだありません。</p></div>
@@ -350,6 +353,6 @@
 
     <script src="/vendor/liveavatar-sdk.js?v=1"></script>
     <script src="/vendor/daily-sdk.js?v=2"></script>
-    <script type="module" src="/app.js?v=39"></script>
+    <script type="module" src="/app.js?v=40"></script>
   </body>
 </html>

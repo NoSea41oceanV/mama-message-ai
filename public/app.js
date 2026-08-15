@@ -2317,8 +2317,13 @@ responseRetryButton.addEventListener("click", () => {
   talkAgainButton.focus();
 });
 responseConfirmButton.addEventListener("click", () => createResponse({ inline: true }));
-adultConfirmButton.addEventListener("click", async () => { await Promise.allSettled([loadLogs(), loadSampling()]); adultDialog.showModal(); });
-adultButton.addEventListener("click", async () => { await Promise.allSettled([loadLogs(), loadSampling()]); adultDialog.showModal(); });
+async function openAdultSettings() {
+  await Promise.allSettled([loadLogs(), loadSampling()]);
+  adultDialog.showModal();
+  void issueGuardianPairing();
+}
+adultConfirmButton.addEventListener("click", openAdultSettings);
+adultButton.addEventListener("click", openAdultSettings);
 closeDialog.addEventListener("click", () => { stopSampleRecording(); adultDialog.close(); });
 revokeConsent.addEventListener("click", () => updateConsent("revoke").catch((error) => { consentAdminStatus.textContent = error.message; }));
 restoreConsent.addEventListener("click", () => updateConsent("restore").catch((error) => { consentAdminStatus.textContent = error.message; }));

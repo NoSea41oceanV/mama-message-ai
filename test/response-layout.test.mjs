@@ -10,13 +10,17 @@ test("keeps an inline follow-up reply within the fixed response screen", async (
   ]);
 
   assert.match(html, /\/styles\.css\?v=29/);
-  assert.match(html, /\/app\.js\?v=39/);
+  assert.match(html, /\/app\.js\?v=40/);
   assert.match(css, /\.screen\[data-screen="response"\] \{ overflow: hidden; \}/);
   assert.match(css, /grid-template-rows: auto minmax\(150px, 1fr\) auto auto 184px auto;/);
   assert.match(css, /\.response-conversation \{[^}]*height: 184px;[^}]*overflow: hidden;/);
   assert.match(css, /\.response-conversation\.is-confirming \.response-talk-row/);
   assert.match(app, /function setResponseTranscriptVisible\(visible\)/);
   assert.match(app, /responseConversation\.classList\.toggle\("is-confirming", visible\)/);
+  assert.match(html, /id="consentAdminStatus"[\s\S]*id="settingsPairingTitle"[\s\S]*id="childPairingCode"[\s\S]*id="decisionList"/);
+  assert.doesNotMatch(html, /data-screen="setup"[\s\S]{0,1200}id="childPairingCode"/);
+  assert.match(app, /function openAdultSettings\(\)/);
+  assert.match(app, /void issueGuardianPairing\(\)/);
 });
 
 test("records the guided voice sample sentence by sentence and stores speaking style per situation", async () => {
